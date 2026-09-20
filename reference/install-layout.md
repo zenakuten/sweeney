@@ -55,11 +55,15 @@ stale inputs. Keep all work in one install.
 
 ## Platform
 
-UT2004 is a Windows game. Most installs, most servers and nearly all modders are on
-Windows — assume that unless what you can see says otherwise.
+UT2004 shipped for Windows, Linux and Mac, and players are on Windows and Linux both.
+Servers likewise — a Linux box running the game is entirely ordinary. **Do not assume a
+platform for playing or hosting; look at the install.**
 
-Linux hosts exist, and there is a native Linux binary, but running the Windows build
-under Wine is common and is what the 64-bit community patch provides. When that is the
+**Development** is the exception: most modders build on Windows, so build commands
+default to Windows unless the environment says otherwise.
+
+A Linux setup may use the native binary, or host the Windows build under Wine — the
+latter is common and is what the 64-bit community patch provides. When that is the
 setup:
 
 - `UCC.exe` is still a Windows program, so **its arguments must be Windows paths** —

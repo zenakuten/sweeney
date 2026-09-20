@@ -2,11 +2,14 @@
 
 ## Platform
 
-UT2004 is a Windows game and most modders build on Windows, so the commands here are
-Windows commands. A `build.bat` beside a mod's source is the conventional wrapper.
+Most modders build on Windows, so the commands here are Windows commands. A `build.bat`
+beside a mod's source is the conventional wrapper.
 
-On Linux there is a native binary, but hosting the Windows `UCC.exe` under Wine is a
-common arrangement and is what the 64-bit community patch provides. Then:
+That is a fact about *building* only. Playing and hosting are split between Windows and
+Linux, so do not carry the assumption into anything about running the game or a server.
+
+A Linux build host may use the native binary, or host the Windows `UCC.exe` under Wine —
+the latter is common and is what the 64-bit community patch provides. Then:
 
 - Prefix with `wine`, and use shell equivalents (`rm -f` for `del`, `mv` for `move`).
 - **Arguments must still be Windows paths.** The program is a Windows program whichever

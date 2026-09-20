@@ -114,8 +114,9 @@ outright.
 
 ## The build
 
-UT2004 is a Windows game and almost everyone builds on Windows. Assume that unless the
-environment tells you otherwise.
+Most modders build on Windows, so that is the default here. Check the install rather
+than assuming — playing and hosting are split fairly evenly between Windows and Linux,
+and it is only the build side that leans one way.
 
 ```bat
 cd System
