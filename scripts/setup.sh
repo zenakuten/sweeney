@@ -28,6 +28,14 @@ for arg in "$@"; do
   esac
 done
 
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys;sys.exit(0 if sys.version_info>=(3,8) else 1)' 2>/dev/null; then
+    PY="$c"; break
+  fi
+done
+[ -n "$PY" ] || { echo "need Python 3.8+ on PATH (tried python3, python, py)" >&2; exit 1; }
+
 say()  { printf '%s\n' "$*"; }
 ok()   { printf '  ok    %s\n' "$*"; }
 warn() { printf '  warn  %s\n' "$*"; }
@@ -79,31 +87,8 @@ say "UT2004 installs"
 
 is_install() { [ -f "$1/System/Engine.u" ]; }
 
-describe() {                       # -> "<version>|<ucc kind>|<bits>|<date>|<commit>"
-  local root="$1" label version ucc bits built commit
-  label=$(sed -n 's/^Label=//p' "$root/System/Build.ini" 2>/dev/null | head -1)
-  case "$label" in
-    *_v[0-9][0-9][0-9][0-9]_*) version=$(printf '%s' "$label" | sed -n 's/.*_v\([0-9]\{4\}\)_.*/\1/p') ;;
-    UT2004_Build_*)            version="retail" ;;
-    *)                         version="unknown" ;;
-  esac
-  # e.g. UT2004_v3374_[2026-07-18_18.30]_d1b145e1
-  built=$(printf '%s' "$label" | sed -n 's/.*\[\([0-9-]*\)_\([0-9.]*\)\].*/\1 \2/p')
-  commit=$(printf '%s' "$label" | sed -n 's/.*\]_\(.*\)$/\1/p')
-  [ -n "$built" ] || built="0000-00-00 00.00"
-  if [ -f "$root/System/UCC.exe" ]; then
-    case "$(file -b "$root/System/UCC.exe" 2>/dev/null)" in
-      *x86-64*|*PE32+*) ucc="UCC.exe"; bits=64 ;;
-      *PE32*)           ucc="UCC.exe"; bits=32 ;;
-      *)                ucc="UCC.exe"; bits="?" ;;
-    esac
-  elif [ -f "$root/System/ucc-bin" ] || [ -f "$root/System/UCC" ]; then
-    ucc="native"; bits=$(case "$(file -bL "$root/System/ucc-bin" 2>/dev/null)" in
-                           *64-bit*) echo 64 ;; *32-bit*) echo 32 ;; *) echo "?" ;; esac)
-  else
-    ucc="none"; bits="-"
-  fi
-  printf '%s|%s|%s|%s|%s' "$version" "$ucc" "$bits" "$built" "$commit"
+describe() {   # -> "<version>|<ucc>|<bits>|<built>|<commit>|<size>|<mtime>"
+  "$PY" "$PLUGIN_ROOT/scripts/inspect_install.py" "$1" 2>/dev/null
 }
 
 # Gather every candidate rather than taking the first hit.
@@ -125,7 +110,7 @@ BEST=-1; BESTKEY=""; BUILD_DATE=""; BUILD_COMMIT=""
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   root=$(printf '%s' "$line" | sed 's/^|//; s/|$//')
-  IFS='|' read -r ver ucc bits built commit <<EOF2
+  IFS='|' read -r ver ucc bits built commit uccsize uccmtime <<EOF2
 $(describe "$root")
 EOF2
   printf '  found  %s\n         v%s, %s%s, built %s%s\n' "$root" "$ver" "$ucc" \
@@ -143,7 +128,7 @@ EOF2
     BEST=$score; BESTKEY="$key"
     INSTALL_ROOT="$root"; UCC_BITS="$bits"; UCC_KIND="$ucc"; BUILD_VERSION="$ver"
     BUILD_DATE="$built"; BUILD_COMMIT="$commit"
-    [ "$ucc" = "UCC.exe" ] && UCC_ID="$(stat -c '%s' "$root/System/UCC.exe" 2>/dev/null) bytes, mtime $(stat -c '%y' "$root/System/UCC.exe" 2>/dev/null | cut -d. -f1)"
+    [ "$ucc" = "UCC.exe" ] && UCC_ID="$uccsize bytes, mtime $uccmtime"
   fi
   # A play install is one with no UCC.exe -- keep the first as the client.
   [ "$ucc" != "UCC.exe" ] && [ -z "$CLIENT_ROOT" ] && CLIENT_ROOT="$root"
@@ -186,7 +171,7 @@ mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
 UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" BUILD_DATE="$BUILD_DATE" BUILD_COMMIT="$BUILD_COMMIT" CLIENT_ROOT="$CLIENT_ROOT" \
 UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
-CONFIG="$CONFIG" python3 - <<'PY'
+CONFIG="$CONFIG" "$PY" - <<'PY'
 import json, os, datetime
 
 def val(k):
@@ -244,12 +229,20 @@ if [ "$INSTALL_COPILOT" -eq 1 ]; then
   for s in "$PLUGIN_ROOT"/skills/*/; do
     [ -d "$s" ] || continue
     name="$(basename "$s")"
-    ln -sfn "${s%/}" "$HOME/.copilot/skills/$name" && n=$((n+1))
+    rm -rf "$HOME/.copilot/skills/$name"
+    if ln -s "${s%/}" "$HOME/.copilot/skills/$name" 2>/dev/null; then
+      n=$((n+1))
+    elif cp -r "${s%/}" "$HOME/.copilot/skills/$name" 2>/dev/null; then
+      n=$((n+1)); COPIED=1
+    fi
   done
-  ok "linked $n skills into ~/.copilot/skills/"
+  ok "installed $n skills into ~/.copilot/skills/"
+  [ "${COPIED:-0}" = 1 ] && warn "copied rather than linked (no symlink support) -- re-run after updating Sweeney"
   if [ -f "$PLUGIN_ROOT/.github/agents/sweeney.agent.md" ]; then
-    ln -sfn "$PLUGIN_ROOT/.github/agents/sweeney.agent.md" "$HOME/.copilot/agents/sweeney.agent.md"
-    ok "linked agent into ~/.copilot/agents/"
+    rm -f "$HOME/.copilot/agents/sweeney.agent.md"
+    ln -s "$PLUGIN_ROOT/.github/agents/sweeney.agent.md" "$HOME/.copilot/agents/sweeney.agent.md" 2>/dev/null \
+      || { cp "$PLUGIN_ROOT/.github/agents/sweeney.agent.md" "$HOME/.copilot/agents/sweeney.agent.md"; COPIED=1; }
+    ok "installed agent into ~/.copilot/agents/"
   fi
   say
   say "  Merge this into ~/.copilot/mcp-config.json for live in-game testing:"

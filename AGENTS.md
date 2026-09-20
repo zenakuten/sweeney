@@ -59,6 +59,18 @@ a change never takes effect in the session that made it.
 Copilot CLI is different: `scripts/setup.sh --install copilot` **symlinks**, so edits are
 live immediately. Re-run it only when a skill is added, removed or renamed.
 
+## Portability
+
+Most UT2004 modders are on Windows, so the shell scripts must run under **Git Bash** —
+which is a smaller toolset than a Linux box. It does **not** ship `file`, `timeout`, or a
+`python3` on PATH.
+
+So: no `file(1)`, no GNU-only `stat` formats, no `timeout(1)`. Resolve Python through the
+`PY` helper (`python3`, `python`, `py`) rather than calling `python3` directly, and put
+anything that needs real portability in Python — `scripts/inspect_install.py` reads PE and
+ELF headers itself for exactly this reason. Symlinks may not be permitted, so fall back to
+copying.
+
 ## Before committing
 
 ```bash

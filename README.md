@@ -111,6 +111,12 @@ read the same copy.
 bash scripts/setup.sh
 ```
 
+**Requirements:** Python 3.8+, git, and a bash. On Windows that means **Git Bash**, which
+ships with [Git for Windows](https://git-scm.com/download/win) — the scripts are written
+to need nothing beyond what it provides. Python is found as `python3`, `python` or `py`,
+so a normal Windows Python install works. `scripts/uccheck.py` is pure Python and needs
+no shell at all.
+
 This clones the UT2004 script source ([deaod/ut2004](https://github.com/deaod/ut2004),
 17MB) to `~/.sweeney/engine/ut2004`, surveys your machine for UT2004 installs, works out
 which one can actually build, and writes `~/.sweeney/config.json`. Safe to re-run, and it

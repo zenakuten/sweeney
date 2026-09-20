@@ -19,6 +19,34 @@
 
 set -uo pipefail
 
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys;sys.exit(0 if sys.version_info>=(3,8) else 1)' 2>/dev/null; then
+    PY="$c"; break
+  fi
+done
+[ -n "$PY" ] || { echo "need Python 3.8+ on PATH (tried python3, python, py)" >&2; exit 1; }
+
+# Git Bash has no timeout(1), and detecting a hang is the whole point here, so
+# the time limit goes through Python instead. Prints output, exits 124 on timeout.
+run_limited() {   # run_limited <seconds> <workdir> <cmd...>
+  "$PY" - "$@" <<'EOF_PY'
+import subprocess, sys
+secs, cwd, cmd = int(sys.argv[1]), sys.argv[2], sys.argv[3:]
+try:
+    p = subprocess.run(cmd, cwd=cwd, timeout=secs,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    sys.stdout.write(p.stdout.decode("latin-1", "replace"))
+    sys.exit(p.returncode)
+except subprocess.TimeoutExpired as e:
+    if e.stdout:
+        sys.stdout.write(e.stdout.decode("latin-1", "replace"))
+    sys.exit(124)
+except FileNotFoundError as e:
+    sys.stderr.write(str(e) + "\n"); sys.exit(127)
+EOF_PY
+}
+
 INSTALL=""; YES=0; TIMEOUT=90
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,7 +59,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$INSTALL" ]; then
-  INSTALL=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.sweeney/config.json'))).get('install_root') or '')" 2>/dev/null)
+  INSTALL=$("$PY" -c "import json,os;print(json.load(open(os.path.expanduser('~/.sweeney/config.json'))).get('install_root') or '')" 2>/dev/null)
 fi
 [ -n "$INSTALL" ] && [ -f "$INSTALL/System/UCC.exe" ] || {
   echo "need a UT2004 install: --install <path> (no System/UCC.exe found)" >&2; exit 1; }
@@ -55,10 +83,12 @@ fi
 
 [ -e "$PKGDIR" ] && { echo "$PKGDIR already exists; remove it first" >&2; exit 1; }
 
-UCC_DESC=$(file -b "$INSTALL/System/UCC.exe" 2>/dev/null | cut -c1-40)
+IFS='|' read -r P_VER P_UCC P_BITS P_BUILT P_COMMIT P_SIZE P_MTIME <<EOF_ID
+$("$PY" "$(dirname "$0")/inspect_install.py" "$INSTALL" 2>/dev/null)
+EOF_ID
 echo "install:  $INSTALL"
-echo "UCC.exe:  $UCC_DESC"
-echo "          $(stat -c '%s bytes, mtime %y' "$INSTALL/System/UCC.exe" | cut -d. -f1)"
+echo "UCC:      v$P_VER, $P_UCC ($P_BITS-bit), built $P_BUILT $P_COMMIT"
+echo "          $P_SIZE bytes, mtime $P_MTIME"
 echo
 
 BACKUP="$INI.sweeney-probe-backup"
@@ -72,7 +102,7 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$PKGDIR/Classes"
 # EditPackages lines live under [Editor.EditorEngine]; append after the last one.
-python3 - "$INI" "$PKG" <<'PY'
+"$PY" - "$INI" "$PKG" <<'PY' 
 import sys
 ini, pkg = sys.argv[1], sys.argv[2]
 with open(ini, 'r', encoding='latin-1', newline='') as f:
@@ -179,8 +209,11 @@ RESULTS=""
 for v in $VARIANTS; do
   emit "$v" > "$PKGDIR/Classes/Probe.uc"
   rm -f "$INSTALL/System/$PKG.u"
-  out=$(cd "$INSTALL/System" && timeout "$TIMEOUT" ./UCC.exe make 2>&1)
-  rc=$?
+  if command -v wine >/dev/null 2>&1 && [ ! -x "$INSTALL/System/UCC.exe" ]; then
+    out=$(run_limited "$TIMEOUT" "$INSTALL/System" wine ./UCC.exe make); rc=$?
+  else
+    out=$(run_limited "$TIMEOUT" "$INSTALL/System" ./UCC.exe make); rc=$?
+  fi
   if [ $rc -eq 124 ]; then
     r="HANG (timed out after ${TIMEOUT}s)"
   elif [ -f "$INSTALL/System/$PKG.u" ]; then
