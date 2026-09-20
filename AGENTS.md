@@ -37,6 +37,27 @@ how the toolchain works. A specific mod's solution to its own problem belongs in
 script source (`<Package>/<Class>.uc` in the reference checkout — it is flat, with no
 `Classes/` subdirectory) or to a stated, reproducible observation.
 
+## Installing a change
+
+`claude plugin install` **copies** the repo into
+`~/.claude/plugins/cache/sweeney/sweeney/<version>/`. It does not run from
+`/data/dev/sweeney`, so editing here changes nothing in Claude Code until the cache is
+refreshed — and `claude plugin update` is keyed on the version, so it reports "already at
+the latest version" and does nothing if the version has not moved.
+
+So, to ship a change:
+
+```bash
+# bump "version" in .claude-plugin/plugin.json, then
+claude plugin update sweeney@sweeney
+```
+
+Then **restart Claude Code** — plugins, agents and skills are loaded at session start, so
+a change never takes effect in the session that made it.
+
+Copilot CLI is different: `scripts/setup.sh --install copilot` **symlinks**, so edits are
+live immediately. Re-run it only when a skill is added, removed or renamed.
+
 ## Before committing
 
 ```bash
