@@ -142,8 +142,13 @@ record outlives the package it describes.
 
 ### On Linux
 
-There is a native Linux binary, but a Wine-hosted Windows `UCC.exe` is a common setup and
-is what a 64-bit community patch gives you. Then:
+**Prefer the Windows `UCC.exe` under Wine over the native `UCC`.** That needs a *Windows*
+UT2004 install (3374) present on the Linux machine, plus Wine — a Linux install ships no
+`UCC.exe`, so a Linux-only box cannot build this way until one is added. Check
+`install_root` in `~/.sweeney/config.json`; setup picks the install that can actually
+build, which is often not the one you play on.
+
+Then:
 
 ```bash
 cd System && rm -f MyMod.u MyMod.ucl && wine UCC.exe make -ini='Z:\path\to\MyMod\make.ini'

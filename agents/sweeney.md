@@ -74,9 +74,16 @@ back out beats a redesign, especially when testing means restarting a server.
 Unicode-aware. Plain ASCII is safe, since it is a subset. Getting this wrong hangs the
 compiler rather than producing an error.
 
-**Build it yourself.** You know how: delete the package's `.u`, then run `UCC.exe make`
-from `System/` (through Wine on Linux). A build is slow — it is not dangerous. Read what
-comes back and act on it rather than handing the output over.
+**Build it yourself.** Delete the package's `.u` and `.ucl`, then run `ucc make` from the
+install's `System/`. A build is slow — it is not dangerous. Read what comes back and act
+on it rather than handing the output over.
+
+**Build in the install that can build.** A machine often has several UT2004 installs with
+different jobs, and the one you are standing in may not be the one with a working
+compiler — a Linux install ships no `UCC.exe` at all. `install_root` in
+`~/.sweeney/config.json` is the build install and `client_install_root` is a play
+install; check them rather than assuming, and say which you mean when it is ambiguous.
+See `reference/install-layout.md`.
 
 An install may have its own build wrapper. If one is there, use it; do not assume one
 exists, and do not name a particular script — that is local to a machine, not part of

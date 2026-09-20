@@ -72,43 +72,91 @@ fi
 say
 
 # -------------------------------------------------------------- UT2004 install
-# An install is identified by System/UCC.exe next to System/Engine.u.
-say "UT2004 install"
-INSTALL_ROOT=""
-is_install() { [ -f "$1/System/UCC.exe" ] && [ -f "$1/System/Engine.u" ]; }
+# One machine often has several installs with different jobs: a Windows one to
+# build with, a native one to play on, an old retail one kept around. They are
+# told apart by what is in System/.
+say "UT2004 installs"
 
+is_install() { [ -f "$1/System/Engine.u" ]; }
+
+describe() {                       # -> "<version>|<ucc kind>|<bits>"
+  local root="$1" label version ucc bits
+  label=$(sed -n 's/^Label=//p' "$root/System/Build.ini" 2>/dev/null | head -1)
+  case "$label" in
+    *_v[0-9][0-9][0-9][0-9]_*) version=$(printf '%s' "$label" | sed -n 's/.*_v\([0-9]\{4\}\)_.*/\1/p') ;;
+    UT2004_Build_*)            version="retail" ;;
+    *)                         version="unknown" ;;
+  esac
+  if [ -f "$root/System/UCC.exe" ]; then
+    case "$(file -b "$root/System/UCC.exe" 2>/dev/null)" in
+      *x86-64*|*PE32+*) ucc="UCC.exe"; bits=64 ;;
+      *PE32*)           ucc="UCC.exe"; bits=32 ;;
+      *)                ucc="UCC.exe"; bits="?" ;;
+    esac
+  elif [ -f "$root/System/ucc-bin" ] || [ -f "$root/System/UCC" ]; then
+    ucc="native"; bits=$(case "$(file -bL "$root/System/ucc-bin" 2>/dev/null)" in
+                           *64-bit*) echo 64 ;; *32-bit*) echo 32 ;; *) echo "?" ;; esac)
+  else
+    ucc="none"; bits="-"
+  fi
+  printf '%s|%s|%s' "$version" "$ucc" "$bits"
+}
+
+# Gather every candidate rather than taking the first hit.
+FOUND=""
+add_install() {
+  case "$FOUND" in *"|$1|"*) return ;; esac
+  is_install "$1" && FOUND="$FOUND|$1|"$'\n'
+}
 d="$PWD"
-while [ "$d" != "/" ]; do
-  if is_install "$d"; then INSTALL_ROOT="$d"; break; fi
-  d="$(dirname "$d")"
+while [ "$d" != "/" ]; do add_install "$d"; d="$(dirname "$d")"; done
+for c in "$HOME"/UT2004* "$HOME"/ut2004* /data/dev/UT2004* \
+         "$HOME"/.steam/steam/steamapps/common/"Unreal Tournament 2004"; do
+  [ -d "$c" ] && add_install "$c"
 done
 
-if [ -z "$INSTALL_ROOT" ]; then
-  for c in "$HOME"/UT2004* "$HOME"/ut2004* "$HOME"/.steam/steam/steamapps/common/"Unreal Tournament 2004"; do
-    [ -d "$c" ] || continue
-    if is_install "$c"; then INSTALL_ROOT="$c"; break; fi
-  done
-fi
+INSTALL_ROOT=""; CLIENT_ROOT=""; UCC_BITS=""; UCC_ID=""; UCC_KIND=""; BUILD_VERSION=""
+BEST=-1
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  root=$(printf '%s' "$line" | sed 's/^|//; s/|$//')
+  IFS='|' read -r ver ucc bits <<EOF2
+$(describe "$root")
+EOF2
+  printf '  found  %s\n         v%s, %s%s\n' "$root" "$ver" "$ucc" \
+    "$([ "$bits" != "-" ] && printf ' (%s-bit)' "$bits")"
 
-UCC_BITS=""; UCC_ID=""
-if [ -n "$INSTALL_ROOT" ]; then
-  ok "found $INSTALL_ROOT"
-  # A 32-bit UCC.exe hangs building large packages. Worth knowing up front.
-  if command -v file >/dev/null 2>&1; then
-    case "$(file -b "$INSTALL_ROOT/System/UCC.exe" 2>/dev/null)" in
-      *x86-64*|*PE32+*) UCC_BITS=64; ok "UCC.exe is 64-bit" ;;
-      *PE32*)           UCC_BITS=32; warn "UCC.exe is 32-bit -- it hangs building large packages" ;;
-      *)                warn "could not determine UCC.exe architecture" ;;
-    esac
+  # Build install: a 64-bit UCC.exe is the best thing to compile with.
+  score=0
+  [ "$ucc" = "UCC.exe" ] && [ "$bits" = 64 ] && score=3
+  [ "$ucc" = "UCC.exe" ] && [ "$bits" = 32 ] && score=2
+  [ "$ucc" = "native" ] && score=1
+  if [ "$score" -gt "$BEST" ]; then
+    BEST=$score; INSTALL_ROOT="$root"; UCC_BITS="$bits"; UCC_KIND="$ucc"; BUILD_VERSION="$ver"
+    [ "$ucc" = "UCC.exe" ] && UCC_ID="$(stat -c '%s' "$root/System/UCC.exe" 2>/dev/null) bytes, mtime $(stat -c '%y' "$root/System/UCC.exe" 2>/dev/null | cut -d. -f1)"
   fi
-  # UCC is community-patched and differs between builds, so record which one
-  # this is. Claims about compiler behaviour are only ever about one binary.
-  UCC_ID="$(stat -c '%s' "$INSTALL_ROOT/System/UCC.exe" 2>/dev/null) bytes, mtime $(stat -c '%y' "$INSTALL_ROOT/System/UCC.exe" 2>/dev/null | cut -d. -f1)"
-  [ -n "$UCC_ID" ] && ok "UCC.exe: $UCC_ID"
+  # A play install is one with no UCC.exe -- keep the first as the client.
+  [ "$ucc" != "UCC.exe" ] && [ -z "$CLIENT_ROOT" ] && CLIENT_ROOT="$root"
+done <<EOF2
+$FOUND
+EOF2
+
+say
+if [ -n "$INSTALL_ROOT" ]; then
+  ok "build install: $INSTALL_ROOT (v$BUILD_VERSION, $UCC_KIND)"
+  case "$UCC_KIND:$UCC_BITS" in
+    UCC.exe:64) : ;;
+    UCC.exe:32) warn "32-bit UCC.exe hangs building large packages -- a 3374 install has a 64-bit one" ;;
+    native:*)   warn "no UCC.exe here. On Linux, building with the Windows UCC.exe under Wine is"
+                warn "preferred over the native binary -- that needs a WINDOWS UT2004 install (3374)" ;;
+    none:*)     warn "no compiler in this install at all" ;;
+  esac
+  [ "$UCC_BITS" = 64 ] && [ "$UCC_KIND" = "UCC.exe" ] && ok "UCC.exe: $UCC_ID"
 else
   warn "no UT2004 install found"
   warn "run this from inside one, or set install_root in $CONFIG by hand"
 fi
+[ -n "$CLIENT_ROOT" ] && [ "$CLIENT_ROOT" != "$INSTALL_ROOT" ] && ok "play install: $CLIENT_ROOT"
 say
 
 # --------------------------------------------------------------- python toolchains
@@ -125,7 +173,7 @@ say
 # ------------------------------------------------------------------------ config
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
-UCC_ID="$UCC_ID" \
+UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" CLIENT_ROOT="$CLIENT_ROOT" \
 UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" python3 - <<'PY'
 import json, os, datetime
@@ -139,9 +187,11 @@ cfg = {
     "generated": datetime.datetime.now().isoformat(timespec="seconds"),
     "engine_source": val("ENGINE_DIR"),
     "install_root": val("INSTALL_ROOT"),
-    "client_install_root": None,
+    "client_install_root": val("CLIENT_ROOT"),
     "ucc_bits": int(os.environ["UCC_BITS"]) if os.environ.get("UCC_BITS") else None,
     "ucc_id": val("UCC_ID"),
+    "ucc_kind": val("UCC_KIND"),
+    "build_version": val("BUILD_VERSION"),
     "engine_source_version": "v3369 script dump (github.com/deaod/ut2004)",
     "mcp_url": "http://localhost:6900/mcp",
     "plugin_root": val("PLUGIN_ROOT"),

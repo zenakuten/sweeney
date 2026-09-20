@@ -40,48 +40,58 @@ Both game inis are **CRLF**. Preserve `\r\n` when editing.
 left in `System/` shadows a `.utx` of the same package name, and the engine silently loads
 the stale one. Always `mv` build output into place, never `cp`.
 
-## Dev, server and client are separate installs
+## Which install is this?
 
-A working setup commonly has three roles, sometimes on different machines:
+There is no single "UT2004 install". Three flavours are in circulation, and a machine
+often has several at once with different jobs.
 
-- **development + dedicated server** — where the mods are built and run
-- **client** — where you connect from, and where client logs and screenshots land
-- **retired installs** — keep none in play; their logs are stale and will mislead
+| | |
+|---|---|
+| **Retail 3369** | the 2004 release. 32-bit tools. |
+| **Windows 3374** | the community patch, Windows build. 64-bit `UCC.exe`. |
+| **Linux 3374** | the community patch, native Linux build. No `UCC.exe`. |
+
+**Identify one from `System/`**, never from the folder name:
+
+```
+System/Build.ini   ->  [BuildVersion] Label=UT2004_v3374_[...]   patched
+                       [BuildVersion] Label=UT2004_Build_[...]   retail
+System/UCC.exe     ->  a Windows install (or a Windows install sitting on a Linux box)
+System/ucc-bin     ->  the native binary; on its own, a Linux install
+```
+
+`file System/UCC.exe` then says 32- or 64-bit, which is the practical difference: **a
+32-bit `UCC.exe` hangs building large packages.** That is the reason to be on 3374 rather
+than retail.
+
+## Building on Linux needs a Windows install
+
+For development on Linux, **`UCC.exe` under Wine is preferred over the native `UCC`**.
+That has a prerequisite people miss: the Linux machine needs a **Windows 3374
+installation** of UT2004 present, and Wine installed. A Linux 3374 install alone will not
+do — it ships no `UCC.exe` at all.
+
+So a Linux modder typically keeps two installs: a Windows 3374 one to build in, and
+whatever they actually play on. Do not assume the install you are standing in is the one
+that can build.
+
+## Several installs, different jobs
+
+Roles worth telling apart, since they are usually different directories and sometimes
+different machines:
+
+- **build** — where the mods are compiled. Needs a usable compiler.
+- **play / client** — where you connect from, and where client logs and screenshots land.
+- **server** — dedicated or listen; may be either of the above or neither.
+- **retired** — older installs kept around. Their logs are stale and will mislead.
+
+`scripts/setup.sh` surveys every install it can find, prints what each one is, and
+records the best build install as `install_root` and a play install as
+`client_install_root` in `~/.sweeney/config.json`. Check those rather than guessing, and
+say which install you mean when it could be ambiguous.
 
 **Never generate content into one install and build in another.** It silently rebuilds
-stale inputs. Keep all work in one install.
-
-`~/.sweeney/config.json` records `install_root` and, if set, `client_install_root`.
-
-## Platform
-
-UT2004 shipped for Windows, Linux and Mac, and players are on Windows and Linux both.
-Servers likewise — a Linux box running the game is entirely ordinary. **Do not assume a
-platform for playing or hosting; look at the install.**
-
-**Development** is the exception: most modders build on Windows, so build commands
-default to Windows unless the environment says otherwise.
-
-A Linux setup may use the native binary, or host the Windows build under Wine — the
-latter is common and is what the 64-bit community patch provides. When that is the
-setup:
-
-- `UCC.exe` is still a Windows program, so **its arguments must be Windows paths** —
-  backslashes, and absolute paths through Wine's drive mapping (`Z:\home\you\...`).
-  Passing a Unix path usually produces a misleading error rather than a clear one.
-- `.bat` wrappers beside a mod's source do not run; read them for intent.
-- A Win64 server reads `ut2004-win64.ini`, not `UT2004.ini` — see below.
-
-## UCC.exe is not one binary
-
-`UCC.exe` is community-patched and differs between builds — a 32-bit and a 64-bit build
-have different sizes, architectures and build dates. **A 32-bit UCC has about 2GB of
-address space and hangs building large packages**, which covers every package
-`EditPackages` names, not just those being compiled, because UCC loads already-built
-packages to resolve references.
-
-Setup records `ucc_bits` and `ucc_id` so a claim about compiler behaviour stays attached to
-a specific binary. To measure behaviour rather than assume it, use `scripts/ucc-probe.sh`.
+stale inputs.
 
 ## Logs
 
