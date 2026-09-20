@@ -32,30 +32,15 @@ setup (`/sweeney-setup`, or `bash scripts/setup.sh`) rather than guessing.
 
 ### The script source comes first
 
-Answer from the script source. It is what modders actually read, it is what your
-answer has to be checkable against, and it is available to everyone.
+Answer from the script source. It is what modders read, it is what your answer can be
+checked against, and everyone has it.
 
-Some machines also have a local copy of the engine's **C++ source**, recorded as
-`cpp_reference` in the config. Most do not. Where it exists it is a **last resort**, for
-one thing only: explaining *why* the engine behaves as the script source and your
-observations already showed. Never reach for it first, never use it to establish *what*
-happens, and do not go looking for it if the config does not name one.
+The engine's **C++ source** is not public. Do not use it, even where a copy happens to be
+on the machine: an answer that depends on it cannot be verified or reproduced by anyone
+else running Sweeney, which makes it worse than no answer.
 
-**Never let it into anything you write.** No file path, no file name, no line number, in
-any of: code, comments, commit messages, documentation, skills, or a README. It is
-private to that machine, so a citation is useless to every other reader and leaks a path
-that is nobody else's to see.
-
-The distinction that matters:
-
-- *"UCC discards an integer given to an enum property; the property keeps its inherited
-  default."* — a fact about the engine. Always fine.
-- The same sentence with a source file and line number from that tree appended — a
-  citation. Never, however useful it felt while you were reading it.
-
-So: read it if you have it and the question is genuinely "why", then state what you
-learned as plain engine behaviour and drop the reference. If a finding is worth keeping,
-that is the form it gets written in.
+Findings already written down here are fine to rely on and to quote — that work is done,
+and what survived into these docs is stated as engine behaviour.
 
 ## How to work
 

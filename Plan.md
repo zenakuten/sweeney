@@ -19,12 +19,14 @@ moment work starts somewhere new. **Sweeney** packages it as a Claude Code plugi
 an agent, a set of skills, and distilled reference docs, installable into any UT2004
 project, with the engine script source as its source of truth.
 
-**Hard constraint:** the UT2004 C++ source tree is private — it sits on the author's
-machine and is available to nobody else — so Sweeney must never reference or mention
-it. 136 citations of it exist across the source docs and must be scrubbed during
-distillation: the *finding* is kept and restated as plain engine behaviour, the
-file/line citation is dropped. `scripts/check-scrub.sh` enforces this and runs over
-this plan too, which is why no such path appears here.
+**Constraint:** the UT2004 C++ source is not public — it is on the author's machine and
+nobody else's — so Sweeney does not build on it; an answer resting on it cannot be
+checked by anyone else. The 136 citations across the source docs are dropped during
+distillation and the findings restated as plain engine behaviour, which is what they
+were all along.
+
+*(Settled later: an early version of this added a scrub script and a read-versus-cite
+policy on top. That was machinery around a one-sentence rule, and was removed.)*
 
 ## Decisions (settled)
 
@@ -306,11 +308,11 @@ skill — it is reference knowledge, not a workflow.
 
 ## Verification
 
-1. **Scrub check (must be clean):** `scripts/check-scrub.sh` exits 0. It greps the
-   whole repo — including this plan — for the private source path and for C++
-   file/line citation shapes, and fails with the offending lines if any survive.
-   Named in `README.md` as the one pre-commit check. Only `Proto.md` is exempt: it is
-   the original brief, not agent-facing content.
+1. ~~**Scrub check**~~ — dropped. A scrub script and a two-part read/cite policy were
+   built for this and turned out to be machinery around a one-sentence rule: the C++
+   source is not public, so Sweeney does not build on it. Findings already distilled
+   into the docs are stated as engine behaviour and stand on their own.
+   `scripts/check-agents.sh` is now the only pre-commit check.
 2. **Setup, from nothing:** with `~/.sweeney` absent, `bash scripts/setup.sh` clones
    the engine source itself, detects the p23win install, and writes a
    `~/.sweeney/config.json` whose `engine_source/Engine/Actor.uc` exists.

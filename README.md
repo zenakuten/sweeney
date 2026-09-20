@@ -75,12 +75,9 @@ choices. A mutator's own solution to its own problem is indexed in
 
 ## Contributing
 
-One check before committing — Sweeney must never reference the UT2004 C++ source,
-which is not publicly available:
+The agent's instructions live in `reference/agent-instructions.md`; run
+`scripts/build-agents.sh` after editing it, and `scripts/check-agents.sh` to confirm the
+two generated agent files still match.
 
-```bash
-scripts/check-scrub.sh
-```
-
-Findings from that source are welcome; the finding is kept and stated as engine
-behaviour, the file/line citation is dropped.
+Sweeney works from the UT2004 **script** source. The engine's C++ source is not public,
+so nothing here should depend on it.

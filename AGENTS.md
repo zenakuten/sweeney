@@ -17,11 +17,10 @@ instructions are `reference/agent-instructions.md`.
 
 ## Rules
 
-**Never cite the UT2004 C++ source in this repo.** Reading a local copy is allowed —
-`cpp_reference` in `~/.sweeney/config.json`, a last resort for "why", after the script
-source. Writing a path, file name or line number from it is not: it is private to one
-machine, so the citation is useless to every other reader. Keep the finding, state it as
-engine behaviour, drop the reference. `scripts/check-scrub.sh` enforces this.
+**Don't build on the UT2004 C++ source.** It is not public, so anything resting on it
+cannot be checked by anyone else using Sweeney. Work from the script source. Findings
+already distilled into these docs are stated as engine behaviour and are fine as they
+stand.
 
 **Skills must stay front-end-neutral.** They run in both Claude Code and Copilot CLI,
 so: no `${CLAUDE_PLUGIN_ROOT}`, no Claude-only frontmatter, no assuming a slash command
@@ -63,6 +62,5 @@ live immediately. Re-run it only when a skill is added, removed or renamed.
 ## Before committing
 
 ```bash
-scripts/check-scrub.sh     # no C++ source references
 scripts/check-agents.sh    # generated agent files match the shared body
 ```
