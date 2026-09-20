@@ -122,13 +122,28 @@ cd System && rm -f MyMod.u && ./UCC.exe make      # wine ./UCC.exe make on Linux
 Run it yourself and read the output. Some installs add their own wrapper around this —
 use it if it is there, but do not count on one.
 
+**Better, where the mod has its own ini:**
+
+```bash
+cd System && rm -f MyMod.u MyMod.ucl && ./UCC.exe make -ini=../MyMod/make.ini
+```
+
+`-ini=` replaces the ini for that build, so `EditPackages` lives with the mod instead of
+in the global `System/UT2004.ini`. Nothing to add before a build or trim after one, and
+two mods cannot fight over the list. Drop the `.ucl` alongside the `.u` — a stale cache
+record outlives the package it describes.
+
 - **`ucc make` skips a package whose `.u` already exists**, so deleting it first is not
   optional. A "no change" build is usually this.
-- **`EditPackages` in `System/UT2004.ini` should list the system packages plus only the
-  package being built.** UCC loads every package listed, even ones it skips compiling,
-  and the editor loads them all at startup — a stale entry slows startup and breaks the
-  editor outright once the package is deleted. Dependent packages still have to be
-  built together. Deleting `UT2004.ini` resets the list to defaults.
+- **Prefer a per-mod ini over editing the global one.** `ucc make -ini=<path>` takes a
+  whole replacement ini, so a mod can carry its own `make.ini` with its own
+  `EditPackages` list and never touch `System/UT2004.ini`. See below.
+- **If you do use `System/UT2004.ini`, `EditPackages` should list the system packages
+  plus only the package being built.** UCC loads every package listed, even ones it
+  skips compiling, and the editor loads them all at startup — a stale entry slows
+  startup and breaks the editor outright once the package is deleted. Dependent
+  packages still have to be built together. Deleting `UT2004.ini` resets the list to
+  defaults.
 - **Move build output into place, do not copy.** `[Core.System]` searches
   `../System/*.u` *before* `../Textures/*.utx`, so a leftover `.u` silently shadows the
   `.utx` that shipped. `mv MyPkg.u ../Textures/MyPkg.utx`.

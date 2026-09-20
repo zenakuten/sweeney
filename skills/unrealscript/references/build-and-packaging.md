@@ -15,9 +15,51 @@ destructive — the only thing it writes is the package.
 have taken effect, this is the first thing to check. A build wrapper, if the install has one,
 usually deletes them for exactly this reason.
 
-## EditPackages
+## A per-mod ini is the better arrangement
 
-`System/UT2004.ini`, under `[Editor.EditorEngine]`:
+`ucc make -ini=<path>` swaps the entire ini for that build, so a mod can keep its own
+`EditPackages` list beside its source and leave `System/UT2004.ini` alone:
+
+```bash
+cd System && rm -f MyMod.u MyMod.ucl && ./UCC.exe make -ini=../MyMod/make.ini
+```
+
+The file is a full ini, not a fragment — copy `System/UT2004.ini` and edit it. The parts
+that matter:
+
+```ini
+[Engine.Engine]
+EditorEngine=Editor.EditorEngine
+
+[Editor.EditorEngine]
+EditPackages=Core
+EditPackages=Engine
+...                       ; the system packages, in dependency order
+EditPackages=MyMod        ; then yours, last
+
+[Core.System]
+Paths=../System/*.u
+Paths=../Textures/*.utx
+...                       ; content search paths, as in the global ini
+```
+
+Why it is worth the copy:
+
+- nothing to add before a build or trim after one
+- two mods cannot fight over one list
+- the editor's startup list is untouched, so a deleted package cannot break UnrealEd
+- the mod's build requirements travel with its source
+
+Delete the `.ucl` along with the `.u`. It is the cache record for the package, and a
+stale one outlives the package it describes.
+
+This is a long-standing community convention rather than anything retail ships; UT2004
+itself expects the global ini. A mod that carries a `make.ini` and a build script is
+using it.
+
+## EditPackages in the global ini
+
+When a mod has no ini of its own, `System/UT2004.ini`, under `[Editor.EditorEngine]`:
 
 ```ini
 EditPackages=MyMod
