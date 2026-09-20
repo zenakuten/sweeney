@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Sweeney must never reference the UT2004 C++ source, which is not publicly available.
-# Findings from it are welcome -- stated as engine behaviour, without the citation.
+# Nothing in this repo may cite the engine's C++ source.
 #
-# Exits non-zero if a reference is found. Run before committing.
+# Reading a local copy is allowed (see reference/agent-instructions.md) -- writing a
+# path, file name or line number from it is not. It is private to one machine, so the
+# citation is useless to every other reader. Keep the finding, state it as engine
+# behaviour, drop the reference.
+#
+# This check is the enforcement arm of that rule. Exits non-zero on a hit.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -17,9 +17,11 @@ instructions are `reference/agent-instructions.md`.
 
 ## Rules
 
-**Never reference the UT2004 C++ source.** It is private and available to nobody else.
-Findings from it are welcome — state them as engine behaviour, drop the file/line
-citation. `scripts/check-scrub.sh` enforces this over the whole repo.
+**Never cite the UT2004 C++ source in this repo.** Reading a local copy is allowed —
+`cpp_reference` in `~/.sweeney/config.json`, a last resort for "why", after the script
+source. Writing a path, file name or line number from it is not: it is private to one
+machine, so the citation is useless to every other reader. Keep the finding, state it as
+engine behaviour, drop the reference. `scripts/check-scrub.sh` enforces this.
 
 **Skills must stay front-end-neutral.** They run in both Claude Code and Copilot CLI,
 so: no `${CLAUDE_PLUGIN_ROOT}`, no Claude-only frontmatter, no assuming a slash command

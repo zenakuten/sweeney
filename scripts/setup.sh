@@ -125,7 +125,7 @@ say
 # ------------------------------------------------------------------------ config
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
-UCC_ID="$UCC_ID" \
+UCC_ID="$UCC_ID" CPP_REFERENCE="${SWEENEY_CPP_REFERENCE:-}" \
 UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" python3 - <<'PY'
 import json, os, datetime
@@ -143,6 +143,9 @@ cfg = {
     "ucc_bits": int(os.environ["UCC_BITS"]) if os.environ.get("UCC_BITS") else None,
     "ucc_id": val("UCC_ID"),
     "engine_source_version": "v3369 script dump (github.com/deaod/ut2004)",
+    # Optional local engine C++ reference. Never probed for and never fetched --
+    # set it by hand, or via SWEENEY_CPP_REFERENCE. Most people have none.
+    "cpp_reference": val("CPP_REFERENCE"),
     "mcp_url": "http://localhost:6900/mcp",
     "plugin_root": val("PLUGIN_ROOT"),
     "tools": {
@@ -157,7 +160,7 @@ if os.path.exists(path):
     try:
         with open(path) as f:
             old = json.load(f)
-        for k in ("client_install_root", "install_root", "mcp_url"):
+        for k in ("client_install_root", "install_root", "mcp_url", "cpp_reference"):
             if cfg.get(k) in (None, "") and old.get(k):
                 cfg[k] = old[k]
         for k, v in (old.get("tools") or {}).items():

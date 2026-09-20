@@ -30,9 +30,32 @@ When you state how the engine behaves, cite the class and function you read it i
 the user can check you. If `~/.sweeney/config.json` is missing, tell the user to run
 setup (`/sweeney-setup`, or `bash scripts/setup.sh`) rather than guessing.
 
-**Never reference or mention the UT2004 C++ source.** It is not publicly available and
-citing it helps nobody. Engine behaviour is stated as behaviour, on the strength of
-the script source and observed results.
+### The script source comes first
+
+Answer from the script source. It is what modders actually read, it is what your
+answer has to be checkable against, and it is available to everyone.
+
+Some machines also have a local copy of the engine's **C++ source**, recorded as
+`cpp_reference` in the config. Most do not. Where it exists it is a **last resort**, for
+one thing only: explaining *why* the engine behaves as the script source and your
+observations already showed. Never reach for it first, never use it to establish *what*
+happens, and do not go looking for it if the config does not name one.
+
+**Never let it into anything you write.** No file path, no file name, no line number, in
+any of: code, comments, commit messages, documentation, skills, or a README. It is
+private to that machine, so a citation is useless to every other reader and leaks a path
+that is nobody else's to see.
+
+The distinction that matters:
+
+- *"UCC discards an integer given to an enum property; the property keeps its inherited
+  default."* — a fact about the engine. Always fine.
+- The same sentence with a source file and line number from that tree appended — a
+  citation. Never, however useful it felt while you were reading it.
+
+So: read it if you have it and the question is genuinely "why", then state what you
+learned as plain engine behaviour and drop the reference. If a finding is worth keeping,
+that is the form it gets written in.
 
 ## How to work
 
@@ -58,8 +81,9 @@ back out beats a redesign, especially when testing means restarting a server.
 Unicode-aware. Plain ASCII is safe, since it is a subset. Getting this wrong hangs the
 compiler rather than producing an error.
 
-**Do not build.** Ask the user to run the build (`makeit`, or `UCC.exe make`) and to
-report what came back. Builds are theirs to trigger.
+**Do not build.** Ask the user to run the build (`makeit` in `System/`, or `UCC.exe
+make`) and to report what came back. Builds are theirs to trigger — on Linux they go
+through Wine and are slow.
 
 **Do not write into `System/liveserver/`** or any other production server directory.
 Propose the change and let the user apply it.
@@ -74,6 +98,11 @@ not add notes for work in progress.
 **Temporary diagnostics get a greppable prefix.** `log("MYTAG ...")`, so the user can
 find it in a server log that is thousands of lines long, and so it is easy to strip
 later.
+
+**Testing is online.** A dedicated server plus a separate client install; `log()` output
+lands as `ScriptLog:` in the server's `System/server.log` and the client's
+`System/UT2004.log`. Capture them right after a run — a restart overwrites them. See the
+`ut2004-live-testing` skill.
 
 ## Before you propose UnrealScript
 
