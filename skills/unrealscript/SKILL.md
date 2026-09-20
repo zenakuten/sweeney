@@ -51,6 +51,23 @@ of the file and hangs.
 Both conditions are needed for the hang — a backslash *and* an unbalanced quote.
 Unbalanced quotes alone (ditto marks, prose across two comment lines) are tolerated.
 
+### Do not end a comment with a backslash
+
+```unrealscript
+// this comment ends with a backslash \
+Log("next line");
+```
+
+A trailing backslash reads as a line continuation, which would pull the following line
+into the comment. Measured against v3369 it does **not** — the engine source contains
+six of these and compiles, including one directly above an opening brace, where a
+swallowed line would unbalance the braces and fail loudly.
+
+Treat it as a warning rather than a rule: it is a long-standing suspect, it means
+nothing at the end of a comment, and it costs nothing to remove. It *is* an error when
+the following line leaves a quote open, since that combination would produce an
+unterminated string and appears nowhere in the engine source to prove otherwise.
+
 ### No ternary operator
 
 `a ? b : c` is not supported and hangs analysis. There are zero uses in the whole

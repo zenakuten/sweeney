@@ -15,6 +15,9 @@ Checks
               A comment that leaves a string literal open. UCC tracks strings
               inside comments, so an unbalanced quote opens one that never
               closes, and analysis runs off the end of the file.
+  comment-trailing-backslash
+              A // comment ending in a backslash. Warning on its own; an error
+              when the next line leaves a quote open.
   ternary     `a ? b : c` is not supported by UCC and hangs analysis.
   enum-default
               `Prop=2` in defaultproperties where Prop is an enum. Silently
@@ -253,6 +256,49 @@ def check_comment_string(path: Path, text: str, regions: list[int]) -> list[Find
     return out
 
 
+def check_comment_trailing_backslash(path: Path, text: str, regions: list[int]) -> list[Finding]:
+    r"""A `//` comment whose last character is a backslash.
+
+    A trailing backslash reads as a line continuation, which would pull the
+    following line into the comment. Tested against v3369: it does *not* --
+    `XInterface/ExtendedConsole.uc:1623` ends a comment with `:\` and is
+    followed by an opening brace, which would unbalance the braces and fail
+    loudly if the line were swallowed, yet the package compiles.
+
+    So this is reported as a warning rather than an error: it is a known
+    suspect, it is free to avoid, and a backslash at the end of a comment
+    carries no meaning anyway.
+
+    It becomes an error when the following line leaves a string open, because
+    that is the combination that would produce an unterminated string if the
+    continuation ever does apply -- and it appears nowhere in the engine
+    source, so nothing establishes that it is safe.
+    """
+    out = []
+    lines = text.splitlines()
+    for start, end in comment_spans(text, regions):
+        if regions[start] != LINE_COMMENT:
+            continue
+        body = text[start:end]
+        if not body.rstrip().endswith("\\"):
+            continue
+        ln = line_of(text, start)
+        nxt = lines[ln] if ln < len(lines) else ""
+        risky = nxt.count('"') % 2 == 1
+        out.append(
+            Finding(path, ln, "comment-trailing-backslash",
+                    "comment ends with a backslash"
+                    + (" and the next line leaves a quote open" if risky else ""),
+                    ("The next line would become part of an unterminated string if "
+                     "UCC treats this as a line continuation. Remove the backslash")
+                    if risky else
+                    ("Reads as a line continuation. UCC v3369 does not appear to "
+                     "honour it in a // comment, but it means nothing here -- remove it"),
+                    level=ERROR if risky else WARN)
+        )
+    return out
+
+
 def check_ternary(path: Path, text: str, regions: list[int]) -> list[Finding]:
     # `?` has no valid use in UnrealScript outside strings and name literals.
     out = []
@@ -424,6 +470,7 @@ def main() -> int:
         text = raw.decode("latin-1")
         regions = classify(text)
         findings.extend(check_comment_string(path, text, regions))
+        findings.extend(check_comment_trailing_backslash(path, text, regions))
         findings.extend(check_ternary(path, text, regions))
         findings.extend(check_enum_defaults(path, text, index))
 
