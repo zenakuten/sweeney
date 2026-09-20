@@ -82,8 +82,8 @@ Declare the accumulator `float`, or compute the value fresh each iteration.
 See the SKILL for the three triggers: a comment that leaves a quote open, the ternary
 operator, and multi-byte UTF-8. Diagnose with:
 
-```bash
-cd System && timeout 60 ./UCC.exe make
+```
+cd System && ucc make          # timeout 60 wine UCC.exe make, on Linux
 ```
 
 and read the last `Parsing` / `Compiling` line.

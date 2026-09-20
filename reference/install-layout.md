@@ -53,6 +53,21 @@ stale inputs. Keep all work in one install.
 
 `~/.sweeney/config.json` records `install_root` and, if set, `client_install_root`.
 
+## Platform
+
+UT2004 is a Windows game. Most installs, most servers and nearly all modders are on
+Windows — assume that unless what you can see says otherwise.
+
+Linux hosts exist, and there is a native Linux binary, but running the Windows build
+under Wine is common and is what the 64-bit community patch provides. When that is the
+setup:
+
+- `UCC.exe` is still a Windows program, so **its arguments must be Windows paths** —
+  backslashes, and absolute paths through Wine's drive mapping (`Z:\home\you\...`).
+  Passing a Unix path usually produces a misleading error rather than a clear one.
+- `.bat` wrappers beside a mod's source do not run; read them for intent.
+- A Win64 server reads `ut2004-win64.ini`, not `UT2004.ini` — see below.
+
 ## UCC.exe is not one binary
 
 `UCC.exe` is community-patched and differs between builds — a 32-bit and a 64-bit build

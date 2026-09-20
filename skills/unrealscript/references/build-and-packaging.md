@@ -1,15 +1,30 @@
 # Building and packaging
 
+## Platform
+
+UT2004 is a Windows game and most modders build on Windows, so the commands here are
+Windows commands. A `build.bat` beside a mod's source is the conventional wrapper.
+
+On Linux there is a native binary, but hosting the Windows `UCC.exe` under Wine is a
+common arrangement and is what the 64-bit community patch provides. Then:
+
+- Prefix with `wine`, and use shell equivalents (`rm -f` for `del`, `mv` for `move`).
+- **Arguments must still be Windows paths.** The program is a Windows program whichever
+  host is running it, so it wants backslashes, and absolute paths go through Wine's drive
+  mapping — `Z:\home\you\UT2004\MyMod\make.ini`. A Unix path is not understood, and
+  the failure is usually a misleading error rather than a clear one.
+- A `.bat` wrapper will not run. Read it to see what the build is meant to do, then issue
+  the commands directly.
+
 ## The loop
 
-```bash
+```bat
 cd System
-rm -f MyMod.u          # not optional -- see below
-./UCC.exe make         # wine ./UCC.exe make on Linux
+del MyMod.u MyMod.ucl      :: not optional -- see below
+ucc make
 ```
 
-Run this yourself and read the output. It is slow under Wine, but it is not
-destructive — the only thing it writes is the package.
+Run this yourself and read the output. Nothing it writes but the package.
 
 **`ucc make` skips any package whose `.u` already exists.** If a change appears not to
 have taken effect, this is the first thing to check. A build wrapper, if the install has one,
@@ -21,7 +36,7 @@ usually deletes them for exactly this reason.
 `EditPackages` list beside its source and leave `System/UT2004.ini` alone:
 
 ```bash
-cd System && rm -f MyMod.u MyMod.ucl && ./UCC.exe make -ini=../MyMod/make.ini
+cd System && del MyMod.u MyMod.ucl && ucc make -ini=..\MyMod\make.ini
 ```
 
 The file is a full ini, not a fragment — copy `System/UT2004.ini` and edit it. The parts
@@ -107,14 +122,15 @@ rather than adding a `ServerPackages=` line to the ini. See the `ut2004-netcode`
 ## Compressing for a redirect
 
 ```bash
-cd System && wine UCC.exe compress ..\Maps\DM-Example.ut2
+cd System && ucc compress ..\Maps\DM-Example.ut2
 ```
 
 Produces `DM-Example.ut2.uz2` beside the source. Two traps:
 
 - **Forward-slash paths silently fail.** `../Maps/DM-Example.ut2` gives
   `Error occurred opening DM-Example.ut2` — note it echoes only the basename, having
-  discarded the directory. Use backslashes, or a full `Z:\home\...` path.
+  discarded the directory. Use backslashes. Under Wine that means a `Z:\...` path, since
+  UCC is a Windows program and a Unix path means nothing to it.
 - **The reported percentage overflows a signed 32-bit int** and goes negative once the
   compressed file passes roughly 21MB. `-15%` does not mean the file grew. Compare
   actual file sizes.

@@ -104,9 +104,8 @@ int, so a decompiled package can carry dozens at once.
 
 ## Diagnosing a hang
 
-```bash
-cd System && timeout 60 ./UCC.exe make
-```
+Give the build a time limit if your shell has one — `timeout 60 wine UCC.exe make` on
+Linux — otherwise watch it and interrupt once it has clearly stopped progressing.
 
 The last `Parsing <Class>` / `Compiling <Class>` line on stdout names the file it died
 in — or, if it reached `Analyzing...`, the package. Bisect from there by stubbing out
@@ -115,23 +114,45 @@ outright.
 
 ## The build
 
-```bash
-cd System && rm -f MyMod.u && ./UCC.exe make      # wine ./UCC.exe make on Linux
+UT2004 is a Windows game and almost everyone builds on Windows. Assume that unless the
+environment tells you otherwise.
+
+```bat
+cd System
+del MyMod.u MyMod.ucl
+ucc make
 ```
 
-Run it yourself and read the output. Some installs add their own wrapper around this —
-use it if it is there, but do not count on one.
+Run it yourself and read the output. Some installs add a wrapper — a `build.bat` beside
+the mod's source is the usual shape — so use one if it is there, but do not assume it.
 
 **Better, where the mod has its own ini:**
 
-```bash
-cd System && rm -f MyMod.u MyMod.ucl && ./UCC.exe make -ini=../MyMod/make.ini
+```bat
+cd System
+del MyMod.u MyMod.ucl
+ucc make -ini=..\MyMod\make.ini
 ```
 
 `-ini=` replaces the ini for that build, so `EditPackages` lives with the mod instead of
 in the global `System/UT2004.ini`. Nothing to add before a build or trim after one, and
 two mods cannot fight over the list. Drop the `.ucl` alongside the `.u` — a stale cache
 record outlives the package it describes.
+
+### On Linux
+
+There is a native Linux binary, but a Wine-hosted Windows `UCC.exe` is a common setup and
+is what a 64-bit community patch gives you. Then:
+
+```bash
+cd System && rm -f MyMod.u MyMod.ucl && wine UCC.exe make -ini='Z:\path\to\MyMod\make.ini'
+```
+
+**Arguments still have to look like Windows paths**, because the program is a Windows
+program whatever is hosting it. Under Wine that means the `Z:` drive mapping and
+backslashes — a Unix path is not understood, and `ucc compress` in particular fails with
+a misleading error that echoes only the basename. A `build.bat` will not run here, so
+read it for intent and issue the commands yourself.
 
 - **`ucc make` skips a package whose `.u` already exists**, so deleting it first is not
   optional. A "no change" build is usually this.

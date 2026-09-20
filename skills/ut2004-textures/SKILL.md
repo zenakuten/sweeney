@@ -32,8 +32,10 @@ the factor a texture actually grew — so at 1× there is nothing to rescale.
 Then name `<Map>Tex` in `EditPackages` and:
 
 ```bash
-cd System && rm -f DMDeckTex.u && ./UCC.exe make
-mv DMDeckTex.u ../Textures/DMDeckTex.utx
+cd System
+del DMDeckTex.u DMDeckTex.ucl
+ucc make
+move DMDeckTex.u ..\Textures\DMDeckTex.utx
 ```
 
 **`mv`, not `cp`** — `System/*.u` is searched before `Textures/*.utx`, so a leftover `.u`
