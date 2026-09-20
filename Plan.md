@@ -8,8 +8,8 @@ body of hard-won, non-obvious knowledge — UCC compiler traps, replication limi
 `.t3d` round-trip losses, package-format rules, texture-import quirks. Today it is
 scattered across:
 
-- `~/.claude/projects/the dev install project/memory/` — 74 memory files (the richest source)
-- `~/.claude/projects/-data-dev-UT2004/memory/` — 39 files, an older subset
+- the Claude project memory for the dev install — 74 memory files (the richest source)
+- the project memory of an older, retired install — 39 files, largely a subset of those
 - ~10k lines of project docs (`DarkWalker.md` 2650, `ut3converter/PLAN.md` 3549,
   `ut3converter/FORMAT.md` 840, READMEs)
 - `~/UT2004_p23win/CLAUDE.md` — build/encoding/testing rules

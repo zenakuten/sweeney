@@ -114,8 +114,9 @@ add_install() {
 }
 d="$PWD"
 while [ "$d" != "/" ]; do add_install "$d"; d="$(dirname "$d")"; done
-for c in "$HOME"/UT2004* "$HOME"/ut2004* /data/dev/UT2004* \
-         "$HOME"/.steam/steam/steamapps/common/"Unreal Tournament 2004"; do
+for c in "$HOME"/UT2004* "$HOME"/ut2004* \
+         "$HOME"/.steam/steam/steamapps/common/"Unreal Tournament 2004" \
+         "$HOME"/.local/share/Steam/steamapps/common/"Unreal Tournament 2004"; do
   [ -d "$c" ] && add_install "$c"
 done
 

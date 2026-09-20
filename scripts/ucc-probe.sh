@@ -15,7 +15,7 @@
 #   - appends   EditPackages=SweeneyProbe to System/UT2004.ini
 # Both are undone at the end, and UT2004.ini is backed up first.
 #
-#   ./ucc-probe.sh --install ~/UT2004_p23win --yes
+#   ./ucc-probe.sh --install ~/UT2004 --yes
 
 set -uo pipefail
 

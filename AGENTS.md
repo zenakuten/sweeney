@@ -41,8 +41,8 @@ script source (`<Package>/<Class>.uc` in the reference checkout — it is flat, 
 ## Installing a change
 
 `claude plugin install` **copies** the repo into
-`~/.claude/plugins/cache/sweeney/sweeney/<version>/`. It does not run from
-`/data/dev/sweeney`, so editing here changes nothing in Claude Code until the cache is
+`~/.claude/plugins/cache/sweeney/sweeney/<version>/` and runs from there, not from this
+working copy, so editing here changes nothing in Claude Code until the cache is
 refreshed — and `claude plugin update` is keyed on the version, so it reports "already at
 the latest version" and does nothing if the version has not moved.
 

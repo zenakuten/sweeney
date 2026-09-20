@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# The original brief -- notes between us, not part of the plugin
+Proto.md
