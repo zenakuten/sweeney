@@ -5,15 +5,15 @@
 ```bash
 cd System
 rm -f MyMod.u          # not optional -- see below
-./UCC.exe make         # or ./makeit, which does the rm + make + compress
+./UCC.exe make         # wine ./UCC.exe make on Linux
 ```
 
-Ask the user to run this. Builds are theirs to trigger, not least because on Linux
-this runs through Wine.
+Run this yourself and read the output. It is slow under Wine, but it is not
+destructive — the only thing it writes is the package.
 
 **`ucc make` skips any package whose `.u` already exists.** If a change appears not to
-have taken effect, this is the first thing to check. `makeit` deletes the `.u` files it
-builds for exactly this reason.
+have taken effect, this is the first thing to check. A build wrapper, if the install has one,
+usually deletes them for exactly this reason.
 
 ## EditPackages
 

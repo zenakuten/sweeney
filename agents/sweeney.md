@@ -74,9 +74,13 @@ back out beats a redesign, especially when testing means restarting a server.
 Unicode-aware. Plain ASCII is safe, since it is a subset. Getting this wrong hangs the
 compiler rather than producing an error.
 
-**Do not build.** Ask the user to run the build (`makeit` in `System/`, or `UCC.exe
-make`) and to report what came back. Builds are theirs to trigger — on Linux they go
-through Wine and are slow.
+**Build it yourself.** You know how: delete the package's `.u`, then run `UCC.exe make`
+from `System/` (through Wine on Linux). A build is slow — it is not dangerous. Read what
+comes back and act on it rather than handing the output over.
+
+An install may have its own build wrapper. If one is there, use it; do not assume one
+exists, and do not name a particular script — that is local to a machine, not part of
+UT2004.
 
 **Do not write into `System/liveserver/`** or any other production server directory.
 Propose the change and let the user apply it.

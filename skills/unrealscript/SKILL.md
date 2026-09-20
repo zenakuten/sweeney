@@ -115,11 +115,12 @@ outright.
 
 ## The build
 
-**Do not run the build yourself — ask the user to run it** and report what came back.
-
 ```bash
-cd System && ./makeit          # or: rm -f MyMod.u && ./UCC.exe make
+cd System && rm -f MyMod.u && ./UCC.exe make      # wine ./UCC.exe make on Linux
 ```
+
+Run it yourself and read the output. Some installs add their own wrapper around this —
+use it if it is there, but do not count on one.
 
 - **`ucc make` skips a package whose `.u` already exists**, so deleting it first is not
   optional. A "no change" build is usually this.
@@ -147,7 +148,7 @@ cd System && ./makeit          # or: rm -f MyMod.u && ./UCC.exe make
 
 ## More
 
-- `references/build-and-packaging.md` — EditPackages, `makeit`, `UCC compress`, and
-  moving output into place
+- `references/build-and-packaging.md` — EditPackages, `UCC compress`, and moving output
+  into place
 - `references/silent-failures.md` — the full list, with symptoms to recognise them by
 - `ut2004-netcode` skill — replication, and why `RemoteRole` matters
