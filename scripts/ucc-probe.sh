@@ -99,25 +99,6 @@ defaultproperties
 }
 V
 ;;
-    comment-trailing-backslash) cat <<'V'
-class Probe extends Info;
-// a comment ending in a backslash \
-var int Marker;
-defaultproperties
-{
-}
-V
-;;
-    comment-trailing-backslash-then-quote) cat <<'V'
-class Probe extends Info;
-// a comment ending in a backslash \
-var string S;
-defaultproperties
-{
-    S="value"
-}
-V
-;;
     comment-escaped-quote) cat <<'V'
 class Probe extends Info;
 // this comment has an escaped quote \" and nothing closes it
@@ -181,8 +162,6 @@ V
 }
 
 VARIANTS="baseline
-comment-trailing-backslash
-comment-trailing-backslash-then-quote
 comment-escaped-quote
 comment-balanced-quotes
 comment-odd-quote

@@ -80,30 +80,6 @@ Both conditions are needed — a backslash *and* an unbalanced quote. Unbalanced
 alone (ditto marks, prose split across two comment lines) appear throughout the engine
 source and in shipped mod code that builds under 3374.
 
-### Do not end a comment with a backslash
-
-```unrealscript
-// this comment ends with a backslash \
-Log("next line");
-```
-
-A trailing backslash reads as a line continuation, which would pull the following line
-into the comment.
-
-**Evidence, such as it is:** the v3369 engine source contains six of these, one directly
-above an opening brace — if that line were swallowed the braces would not balance and the
-build would fail loudly, so Epic's compiler did not continue the comment. Nothing has
-been measured on a patched 3369 or 3374 UCC: the 472 mod files that build under 3374
-contain no trailing-backslash comments at all, so they say nothing either way.
-
-Treat it as a warning rather than a rule. It is a long-standing suspect, it means
-nothing at the end of a comment, and it costs nothing to remove. It *is* an error when
-the following line leaves a quote open, since that would give an unterminated string if
-the continuation ever does apply, and that combination appears nowhere in the corpus to
-prove otherwise.
-
-To settle it for your compiler, run `scripts/ucc-probe.sh`.
-
 ### No ternary operator
 
 `a ? b : c` is not supported and hangs analysis. There are zero uses in the whole

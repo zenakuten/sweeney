@@ -103,7 +103,7 @@ Load the relevant one rather than working from memory:
 | `ut2004-maps` | `.t3d`, UnrealEd, BSP, terrain, collision |
 | `ut2004-live-testing` | driving a running server, logs, screenshots |
 | `ut3-map-conversion` | converting UT3 maps with `ut3converter` |
-| `ut2004-texture-upscaling` | rebuilding a map's textures with `utupscaler` |
+| `ut2004-textures` | remaking a map's textures with an image model |
 
 `reference/project-catalog.md` lists existing mods that solved particular problems —
 prior art to read, not engine behaviour to copy.
