@@ -90,7 +90,7 @@ if [ -z "$INSTALL_ROOT" ]; then
   done
 fi
 
-UCC_BITS=""
+UCC_BITS=""; UCC_ID=""
 if [ -n "$INSTALL_ROOT" ]; then
   ok "found $INSTALL_ROOT"
   # A 32-bit UCC.exe hangs building large packages. Worth knowing up front.
@@ -101,6 +101,10 @@ if [ -n "$INSTALL_ROOT" ]; then
       *)                warn "could not determine UCC.exe architecture" ;;
     esac
   fi
+  # UCC is community-patched and differs between builds, so record which one
+  # this is. Claims about compiler behaviour are only ever about one binary.
+  UCC_ID="$(stat -c '%s' "$INSTALL_ROOT/System/UCC.exe" 2>/dev/null) bytes, mtime $(stat -c '%y' "$INSTALL_ROOT/System/UCC.exe" 2>/dev/null | cut -d. -f1)"
+  [ -n "$UCC_ID" ] && ok "UCC.exe: $UCC_ID"
 else
   warn "no UT2004 install found"
   warn "run this from inside one, or set install_root in $CONFIG by hand"
@@ -121,6 +125,7 @@ say
 # ------------------------------------------------------------------------ config
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
+UCC_ID="$UCC_ID" \
 UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" python3 - <<'PY'
 import json, os, datetime
@@ -136,6 +141,8 @@ cfg = {
     "install_root": val("INSTALL_ROOT"),
     "client_install_root": None,
     "ucc_bits": int(os.environ["UCC_BITS"]) if os.environ.get("UCC_BITS") else None,
+    "ucc_id": val("UCC_ID"),
+    "engine_source_version": "v3369 script dump (github.com/deaod/ut2004)",
     "mcp_url": "http://localhost:6900/mcp",
     "plugin_root": val("PLUGIN_ROOT"),
     "tools": {

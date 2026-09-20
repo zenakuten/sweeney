@@ -5,6 +5,31 @@ description: Writing and compiling UnrealScript for UT2004 / Unreal Engine 2 —
 
 # UnrealScript (UT2004 / UE2)
 
+## Which UCC is this?
+
+UCC is community-patched and **there is more than one of it**. A 3369 install and a
+3374 install carry different binaries — different sizes, different architectures, built
+years apart. 3374 is intended to be fully compatible with 3369 and adds enhancements on
+top, so differences are not expected, but "not expected" is not "measured".
+
+The engine script source Sweeney reads is a **v3369 dump**, and it was compiled by
+Epic's own compiler, not by either patched UCC. So "it appears in the engine source and
+compiles" is evidence about a *third* compiler.
+
+Consequences, and they matter:
+
+- Compiler behaviour below is **reported with its evidence**, so you can tell a measured
+  fact from received wisdom.
+- When it matters, measure it on the install in front of you:
+  `scripts/ucc-probe.sh --install <root> --yes` builds a throwaway package one construct
+  at a time and reports ok / error / hang. It restores the install afterwards.
+- `~/.sweeney/config.json` records `ucc_bits` and `ucc_id` for the detected install.
+  Quote them when reporting a compiler behaviour, so the claim stays attached to a
+  binary.
+- **A 32-bit `UCC.exe` hangs building large packages.** This is why the 3369 install was
+  retired in favour of the 64-bit one. Never generate into one install and build in
+  another: it silently rebuilds stale inputs.
+
 UCC, the UT2004 script compiler, has two failure modes that cost far more time than
 ordinary compile errors:
 
@@ -21,9 +46,12 @@ Neither shows up as a compile error, so check for them before building.
 python3 <sweeney>/scripts/uccheck.py MyMod/Classes
 ```
 
-Catches the four traps below. Errors are real; warnings appear throughout code that
+Catches the traps below. Errors are real; warnings appear throughout code that
 compiles. It resolves property types through the class hierarchy using the engine
 source, so run setup first for the enum check to work properly.
+
+Calibrated to report zero errors across the 2432-file engine source and 472 mod files
+that build under a 64-bit 3374 UCC.
 
 ## The traps
 
@@ -48,8 +76,9 @@ of the file and hangs.
 // the "name" field                 <- fine: balanced
 ```
 
-Both conditions are needed for the hang — a backslash *and* an unbalanced quote.
-Unbalanced quotes alone (ditto marks, prose across two comment lines) are tolerated.
+Both conditions are needed — a backslash *and* an unbalanced quote. Unbalanced quotes
+alone (ditto marks, prose split across two comment lines) appear throughout the engine
+source and in shipped mod code that builds under 3374.
 
 ### Do not end a comment with a backslash
 
@@ -59,14 +88,21 @@ Log("next line");
 ```
 
 A trailing backslash reads as a line continuation, which would pull the following line
-into the comment. Measured against v3369 it does **not** — the engine source contains
-six of these and compiles, including one directly above an opening brace, where a
-swallowed line would unbalance the braces and fail loudly.
+into the comment.
 
-Treat it as a warning rather than a rule: it is a long-standing suspect, it means
+**Evidence, such as it is:** the v3369 engine source contains six of these, one directly
+above an opening brace — if that line were swallowed the braces would not balance and the
+build would fail loudly, so Epic's compiler did not continue the comment. Nothing has
+been measured on a patched 3369 or 3374 UCC: the 472 mod files that build under 3374
+contain no trailing-backslash comments at all, so they say nothing either way.
+
+Treat it as a warning rather than a rule. It is a long-standing suspect, it means
 nothing at the end of a comment, and it costs nothing to remove. It *is* an error when
-the following line leaves a quote open, since that combination would produce an
-unterminated string and appears nowhere in the engine source to prove otherwise.
+the following line leaves a quote open, since that would give an unterminated string if
+the continuation ever does apply, and that combination appears nowhere in the corpus to
+prove otherwise.
+
+To settle it for your compiler, run `scripts/ucc-probe.sh`.
 
 ### No ternary operator
 
