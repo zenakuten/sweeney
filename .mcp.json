@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ut2004": {
+      "type": "http",
+      "url": "http://localhost:6900/mcp"
+    }
+  }
+}

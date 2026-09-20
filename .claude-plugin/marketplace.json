@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sweeney",
+  "description": "Sweeney, the UT2004 modding agent",
+  "owner": {
+    "name": "zenakuten"
+  },
+  "plugins": [
+    {
+      "name": "sweeney",
+      "description": "UT2004 UnrealScript and modding agent: engine source as source of truth, UCC compile traps, replication, GUI, the content pipeline, map work, and live in-game testing.",
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}
