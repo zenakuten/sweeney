@@ -79,14 +79,18 @@ say "UT2004 installs"
 
 is_install() { [ -f "$1/System/Engine.u" ]; }
 
-describe() {                       # -> "<version>|<ucc kind>|<bits>"
-  local root="$1" label version ucc bits
+describe() {                       # -> "<version>|<ucc kind>|<bits>|<date>|<commit>"
+  local root="$1" label version ucc bits built commit
   label=$(sed -n 's/^Label=//p' "$root/System/Build.ini" 2>/dev/null | head -1)
   case "$label" in
     *_v[0-9][0-9][0-9][0-9]_*) version=$(printf '%s' "$label" | sed -n 's/.*_v\([0-9]\{4\}\)_.*/\1/p') ;;
     UT2004_Build_*)            version="retail" ;;
     *)                         version="unknown" ;;
   esac
+  # e.g. UT2004_v3374_[2026-07-18_18.30]_d1b145e1
+  built=$(printf '%s' "$label" | sed -n 's/.*\[\([0-9-]*\)_\([0-9.]*\)\].*/\1 \2/p')
+  commit=$(printf '%s' "$label" | sed -n 's/.*\]_\(.*\)$/\1/p')
+  [ -n "$built" ] || built="0000-00-00 00.00"
   if [ -f "$root/System/UCC.exe" ]; then
     case "$(file -b "$root/System/UCC.exe" 2>/dev/null)" in
       *x86-64*|*PE32+*) ucc="UCC.exe"; bits=64 ;;
@@ -99,7 +103,7 @@ describe() {                       # -> "<version>|<ucc kind>|<bits>"
   else
     ucc="none"; bits="-"
   fi
-  printf '%s|%s|%s' "$version" "$ucc" "$bits"
+  printf '%s|%s|%s|%s|%s' "$version" "$ucc" "$bits" "$built" "$commit"
 }
 
 # Gather every candidate rather than taking the first hit.
@@ -116,23 +120,28 @@ for c in "$HOME"/UT2004* "$HOME"/ut2004* /data/dev/UT2004* \
 done
 
 INSTALL_ROOT=""; CLIENT_ROOT=""; UCC_BITS=""; UCC_ID=""; UCC_KIND=""; BUILD_VERSION=""
-BEST=-1
+BEST=-1; BESTKEY=""; BUILD_DATE=""; BUILD_COMMIT=""
 while IFS= read -r line; do
   [ -n "$line" ] || continue
   root=$(printf '%s' "$line" | sed 's/^|//; s/|$//')
-  IFS='|' read -r ver ucc bits <<EOF2
+  IFS='|' read -r ver ucc bits built commit <<EOF2
 $(describe "$root")
 EOF2
-  printf '  found  %s\n         v%s, %s%s\n' "$root" "$ver" "$ucc" \
-    "$([ "$bits" != "-" ] && printf ' (%s-bit)' "$bits")"
+  printf '  found  %s\n         v%s, %s%s, built %s%s\n' "$root" "$ver" "$ucc" \
+    "$([ "$bits" != "-" ] && printf ' (%s-bit)' "$bits")" "$built" \
+    "$([ -n "$commit" ] && printf ' %s' "$commit")"
 
   # Build install: a 64-bit UCC.exe is the best thing to compile with.
   score=0
   [ "$ucc" = "UCC.exe" ] && [ "$bits" = 64 ] && score=3
   [ "$ucc" = "UCC.exe" ] && [ "$bits" = 32 ] && score=2
   [ "$ucc" = "native" ] && score=1
-  if [ "$score" -gt "$BEST" ]; then
-    BEST=$score; INSTALL_ROOT="$root"; UCC_BITS="$bits"; UCC_KIND="$ucc"; BUILD_VERSION="$ver"
+  # capability, then build date -- "3374" alone does not say which patch it is
+  key="$score $built"
+  if [ "$score" -gt "$BEST" ] || { [ "$score" -eq "$BEST" ] && [ "$key" \> "$BESTKEY" ]; }; then
+    BEST=$score; BESTKEY="$key"
+    INSTALL_ROOT="$root"; UCC_BITS="$bits"; UCC_KIND="$ucc"; BUILD_VERSION="$ver"
+    BUILD_DATE="$built"; BUILD_COMMIT="$commit"
     [ "$ucc" = "UCC.exe" ] && UCC_ID="$(stat -c '%s' "$root/System/UCC.exe" 2>/dev/null) bytes, mtime $(stat -c '%y' "$root/System/UCC.exe" 2>/dev/null | cut -d. -f1)"
   fi
   # A play install is one with no UCC.exe -- keep the first as the client.
@@ -143,7 +152,8 @@ EOF2
 
 say
 if [ -n "$INSTALL_ROOT" ]; then
-  ok "build install: $INSTALL_ROOT (v$BUILD_VERSION, $UCC_KIND)"
+  ok "build install: $INSTALL_ROOT"
+  ok "  v$BUILD_VERSION, $UCC_KIND, built $BUILD_DATE $BUILD_COMMIT"
   case "$UCC_KIND:$UCC_BITS" in
     UCC.exe:64) : ;;
     UCC.exe:32) warn "32-bit UCC.exe hangs building large packages -- a 3374 install has a 64-bit one" ;;
@@ -173,7 +183,7 @@ say
 # ------------------------------------------------------------------------ config
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
-UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" CLIENT_ROOT="$CLIENT_ROOT" \
+UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" BUILD_DATE="$BUILD_DATE" BUILD_COMMIT="$BUILD_COMMIT" CLIENT_ROOT="$CLIENT_ROOT" \
 UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" python3 - <<'PY'
 import json, os, datetime
@@ -192,6 +202,8 @@ cfg = {
     "ucc_id": val("UCC_ID"),
     "ucc_kind": val("UCC_KIND"),
     "build_version": val("BUILD_VERSION"),
+    "build_date": val("BUILD_DATE"),
+    "build_commit": val("BUILD_COMMIT"),
     "engine_source_version": "v3369 script dump (github.com/deaod/ut2004)",
     "mcp_url": "http://localhost:6900/mcp",
     "plugin_root": val("PLUGIN_ROOT"),

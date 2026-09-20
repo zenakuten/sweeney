@@ -54,8 +54,8 @@ often has several at once with different jobs.
 **Identify one from `System/`**, never from the folder name:
 
 ```
-System/Build.ini   ->  [BuildVersion] Label=UT2004_v3374_[...]   patched
-                       [BuildVersion] Label=UT2004_Build_[...]   retail
+System/Build.ini   ->  [BuildVersion] Label=UT2004_v3374_[2026-07-18_18.30]_d1b145e1
+                       [BuildVersion] Label=UT2004_Build_[2005-11-23_16.22]    retail
 System/UCC.exe     ->  a Windows install (or a Windows install sitting on a Linux box)
 System/ucc-bin     ->  the native binary; on its own, a Linux install
 ```
@@ -63,6 +63,26 @@ System/ucc-bin     ->  the native binary; on its own, a Linux install
 `file System/UCC.exe` then says 32- or 64-bit, which is the practical difference: **a
 32-bit `UCC.exe` hangs building large packages.** That is the reason to be on 3374 rather
 than retail.
+
+### "3374" is not one thing
+
+The patch is maintained, so there are many 3374 builds and an old one is genuinely old.
+**Nothing in the install names the patch level** — the `pNN` in a folder name is the
+owner's own convention, not something the game records. What `Build.ini` does give is a
+build **date** and **commit**, and those order reliably:
+
+```
+UT2004_v3374_[2026-07-18_18.30]_d1b145e1     newer patch
+UT2004_v3374_[2026-03-25_08.17]_47d00acd     older patch, same 3374
+```
+
+Two installs both reading "v3374" can be months apart. When it matters which one you are
+in, compare the date — and note that two installs sharing a date and commit are the same
+build, regardless of what their folders are called.
+
+`scripts/setup.sh` picks the build install on capability first and build date second, so
+it prefers the newest 3374 rather than whichever sorts first. The chosen one's
+`build_version`, `build_date` and `build_commit` are in `~/.sweeney/config.json`.
 
 ## Building on Linux needs a Windows install
 
