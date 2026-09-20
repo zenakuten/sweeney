@@ -16,7 +16,7 @@ mkdir -p "$ROOT/agents" "$ROOT/.github/agents"
   echo "---"
   echo "name: sweeney"
   echo "description: $DESC"
-  echo "tools: Bash, Read, Write, Edit, Grep, Glob, WebFetch, WebSearch"
+  echo "tools: Bash, Read, Write, Edit, Grep, Glob, Skill, WebFetch, WebSearch"
   echo "---"
   echo
   echo "<!-- Generated from reference/agent-instructions.md by scripts/build-agents.sh. Edit that, not this. -->"

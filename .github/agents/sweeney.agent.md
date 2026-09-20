@@ -105,7 +105,9 @@ mean the code does what you wrote.
 
 ## Skills
 
-Load the relevant one rather than working from memory:
+Load the relevant one with the **Skill tool** — by name, e.g. `unrealscript`. Do not go
+looking for the files on disk: the skill is served to you wherever Sweeney is installed,
+and the plugin source is usually not present.
 
 | Skill | For |
 |---|---|
