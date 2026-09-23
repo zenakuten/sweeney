@@ -257,10 +257,15 @@ if [ "$INSTALL_COPILOT" -eq 1 ]; then
 fi
 if [ "$INSTALL_VSCODE" -eq 1 ]; then
   case "$(uname -s)" in
-    Darwin)               VSCODE_USER="$HOME/Library/Application Support/Code/User" ;;
-    MINGW*|MSYS*|CYGWIN*) VSCODE_USER="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
-    *)                    VSCODE_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User" ;;
+    Darwin)               base="$HOME/Library/Application Support" ;;
+    MINGW*|MSYS*|CYGWIN*) base="${APPDATA:-$HOME/AppData/Roaming}" ;;
+    *)                    base="${XDG_CONFIG_HOME:-$HOME/.config}" ;;
   esac
+  # Distro builds keep their config under a different name ("Code - OSS" on Arch).
+  VSCODE_USER="$base/Code/User"
+  for c in "Code" "Code - OSS" "Code - Insiders" "VSCodium"; do
+    [ -d "$base/$c/User" ] && { VSCODE_USER="$base/$c/User"; break; }
+  done
   say "  Merge this into $VSCODE_USER/mcp.json for live in-game testing"
   say "  (or run \"MCP: Open User Configuration\" in VS Code):"
   say
