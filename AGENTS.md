@@ -1,7 +1,7 @@
 # Working on Sweeney
 
 Sweeney is a UT2004 modding agent, shipped as a Claude Code plugin and as a Copilot
-CLI agent + skills. This file is for working **on** Sweeney. The agent's own
+agent + skills (Copilot CLI and VS Code). This file is for working **on** Sweeney. The agent's own
 instructions are `reference/agent-instructions.md`.
 
 ## Where things live
@@ -10,7 +10,8 @@ instructions are `reference/agent-instructions.md`.
 |---|---|
 | `reference/agent-instructions.md` | the agent body — **the only place to edit it** |
 | `agents/sweeney.md` | generated, Claude Code |
-| `.github/agents/sweeney.agent.md` | generated, Copilot CLI |
+| `.github/agents/sweeney.agent.md` | generated, Copilot CLI and VS Code |
+| `agents/*-mcp-config.json` | the UT2004MCP entry, in Copilot CLI and VS Code format |
 | `skills/<name>/SKILL.md` | the knowledge, one skill per topic |
 | `reference/` | cross-cutting docs the skills draw on |
 | `scripts/` | setup, checks, the `.uc` linter |
@@ -22,10 +23,10 @@ cannot be checked by anyone else using Sweeney. Work from the script source. Fin
 already distilled into these docs are stated as engine behaviour and are fine as they
 stand.
 
-**Skills must stay front-end-neutral.** They run in both Claude Code and Copilot CLI,
+**Skills must stay front-end-neutral.** They run in Claude Code, Copilot CLI and VS Code,
 so: no `${CLAUDE_PLUGIN_ROOT}`, no Claude-only frontmatter, no assuming a slash command
 ran. Resolve paths through `~/.sweeney/config.json`, which `scripts/setup.sh` writes.
-Required frontmatter is `name` and `description` — both front ends need them.
+Required frontmatter is `name` and `description` — every front end needs them.
 
 **Edit the agent body, not the generated files.** After editing
 `reference/agent-instructions.md`, run `scripts/build-agents.sh`.
@@ -56,8 +57,9 @@ claude plugin update sweeney@sweeney
 Then **restart Claude Code** — plugins, agents and skills are loaded at session start, so
 a change never takes effect in the session that made it.
 
-Copilot CLI is different: `scripts/setup.sh --install copilot` **symlinks**, so edits are
-live immediately. Re-run it only when a skill is added, removed or renamed.
+Copilot CLI and VS Code are different: `scripts/setup.sh --install copilot` (or
+`vscode`) **symlinks** into `~/.copilot/`, which both read, so edits are live
+immediately. Re-run it only when a skill is added, removed or renamed.
 
 ## Portability
 

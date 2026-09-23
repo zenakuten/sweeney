@@ -8,7 +8,7 @@ accepts your line and drops it, the package builds clean and the texture is upsi
 the mutator works offline and does nothing on a server. You do not get an error. You get
 a clean build and a bug you find in game, hours later.
 
-Sweeney is a Claude Code plugin — and a GitHub Copilot CLI agent — carrying the answers
+Sweeney is a Claude Code plugin — and a GitHub Copilot agent, in the CLI or VS Code — carrying the answers
 to those failures, plus the tools to catch them before you build.
 
 ## The kind of thing it knows
@@ -102,8 +102,19 @@ bash sweeney/scripts/setup.sh --install copilot
 Links the skills into `~/.copilot/skills/` and the agent into `~/.copilot/agents/`. Then
 `copilot --agent sweeney`, or pick it with `/agent`.
 
-The skills are plain `SKILL.md` files with no host-specific syntax, so both front ends
-read the same copy.
+### VS Code (GitHub Copilot Chat)
+
+```bash
+bash sweeney/scripts/setup.sh --install vscode
+```
+
+VS Code reads personal skills and agents from `~/.copilot/` as well, so this is the same
+install as the Copilot CLI one. It also prints the `ut2004` entry to merge into VS Code's
+user `mcp.json` (**MCP: Open User Configuration**). Then pick **sweeney** from the agent
+dropdown in the Chat view.
+
+The skills are plain `SKILL.md` files with no host-specific syntax, so every front end
+reads the same copy.
 
 ## Setup
 

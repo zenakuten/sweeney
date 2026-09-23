@@ -15,15 +15,16 @@ ENGINE_DIR="${SWEENEY_ENGINE:-$SWEENEY_HOME/engine/ut2004}"
 CONFIG="$SWEENEY_HOME/config.json"
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-INSTALL_COPILOT=0
+INSTALL_COPILOT=0; INSTALL_VSCODE=0
 for arg in "$@"; do
   case "$arg" in
     --install) ;;
     copilot|--install=copilot) INSTALL_COPILOT=1 ;;
+    vscode|--install=vscode)   INSTALL_VSCODE=1 ;;
     -h|--help)
       sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
       echo
-      echo "Usage: setup.sh [--install copilot]"
+      echo "Usage: setup.sh [--install copilot|vscode]"
       exit 0 ;;
   esac
 done
@@ -221,9 +222,11 @@ print(f"  ok    wrote {path}")
 PY
 say
 
-# ------------------------------------------------------------- copilot install
-if [ "$INSTALL_COPILOT" -eq 1 ]; then
-  say "Copilot CLI install"
+# ------------------------------------------------- copilot / vscode install
+# VS Code reads personal skills and agents from ~/.copilot/ too, so both front
+# ends share one install there. Only their MCP config differs.
+if [ "$INSTALL_COPILOT" -eq 1 ] || [ "$INSTALL_VSCODE" -eq 1 ]; then
+  say "Copilot CLI / VS Code install"
   mkdir -p "$HOME/.copilot/skills" "$HOME/.copilot/agents"
   n=0
   for s in "$PLUGIN_ROOT"/skills/*/; do
@@ -245,9 +248,25 @@ if [ "$INSTALL_COPILOT" -eq 1 ]; then
     ok "installed agent into ~/.copilot/agents/"
   fi
   say
+fi
+if [ "$INSTALL_COPILOT" -eq 1 ]; then
   say "  Merge this into ~/.copilot/mcp-config.json for live in-game testing:"
   say
   sed 's/^/    /' "$PLUGIN_ROOT/agents/copilot-mcp-config.json"
+  say
+fi
+if [ "$INSTALL_VSCODE" -eq 1 ]; then
+  case "$(uname -s)" in
+    Darwin)               VSCODE_USER="$HOME/Library/Application Support/Code/User" ;;
+    MINGW*|MSYS*|CYGWIN*) VSCODE_USER="${APPDATA:-$HOME/AppData/Roaming}/Code/User" ;;
+    *)                    VSCODE_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User" ;;
+  esac
+  say "  Merge this into $VSCODE_USER/mcp.json for live in-game testing"
+  say "  (or run \"MCP: Open User Configuration\" in VS Code):"
+  say
+  sed 's/^/    /' "$PLUGIN_ROOT/agents/vscode-mcp-config.json"
+  say
+  say "  Then pick \"sweeney\" from the agent dropdown in the Chat view."
   say
 fi
 
