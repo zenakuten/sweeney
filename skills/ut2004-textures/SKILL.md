@@ -5,10 +5,25 @@ description: Rebuilding a UT2004 map's textures with AI image models — surveyi
 
 # Rebuilding a map's textures
 
-The `utupscaler` toolchain works out what textures a map uses, pulls them out of whatever
-packages they live in, **runs them through an image model**, writes a buildable
-`<Map>Tex` package, and rewrites the map's `.t3d` to match. Find it via
-`tools.utupscaler` in `~/.sweeney/config.json`.
+The texture-rebuild toolchain **ships with Sweeney**, at `tools/uttexture/` under
+`plugin_root` — `tools.uttexture` in `~/.sweeney/config.json` points at it. It works out
+what textures a map uses, pulls them out of whatever packages they live in, **runs them
+through an image model**, writes a buildable `<Map>Tex` package, and rewrites the map's
+`.t3d` to match.
+
+It needs `numpy` and `Pillow`, plus `magick` (ImageMagick), an image model runner such as
+`realesrgan-ncnn-vulkan`, `UCC` to build the package, and **`umodel`** — Gildor's UE
+Viewer — which every texture and mesh export goes through.
+
+umodel is not redistributable, so it is fetched on request:
+`bash scripts/setup.sh --install-umodel` puts it in `~/.sweeney/umodel` and records
+`tools.umodel`. Off Windows this is the Windows build run through `wine`; Gildor's Linux
+build is 32-bit against `libpng12` and will not start on a current distro. Without it the
+pipeline stops at the first export rather than quietly rebuilding nothing.
+
+Per-map data — extracted PNGs, upscales, the manifest — runs to **gigabytes per map**, so
+it is written to `paths.texture_work` (the install's `texture-rebuild/` by default), never
+beside the code.
 
 **Upscaling is one use, not the purpose.** `scale` is a parameter, and the pipeline is
 just as usable for regenerating textures at their existing size — restyling a map,
@@ -21,12 +36,12 @@ The only step that *cares* about resolution is brush UV rescaling, and that is d
 the factor a texture actually grew — so at 1× there is nothing to rescale.
 
 ```bash
-./utup.py survey   DM-Deck      # what it uses, and how each texture is reached
-./utup.py extract  DM-Deck      # pull them out, read their properties
-./utup.py upscale  DM-Deck      # run the image model
-./utup.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc
-./utup.py t3d      DM-Deck      # export the map and rewrite it
-./utup.py all      DM-Deck
+./uttexture.py survey   DM-Deck      # what it uses, and how each texture is reached
+./uttexture.py extract  DM-Deck      # pull them out, read their properties
+./uttexture.py upscale  DM-Deck      # run the image model
+./uttexture.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc
+./uttexture.py t3d      DM-Deck      # export the map and rewrite it
+./uttexture.py all      DM-Deck
 ```
 
 Then name `<Map>Tex` in `EditPackages` and:
@@ -41,6 +56,27 @@ move DMDeckTex.u ..\Textures\DMDeckTex.utx
 **`mv`, not `cp`** — `System/*.u` is searched before `Textures/*.utx`, so a leftover `.u`
 silently shadows the shipped `.utx`. Copying instead has produced gigabytes of duplicates
 and builds that tested the wrong file.
+
+### Importing the rewritten map
+
+Take `<Map>Tex` back **out** of `EditPackages` before starting UnrealEd. Left in, the
+editor preloads the package under its own name, the generated materials stay attached to
+that copy instead of appearing under `MyLevel`, and every surface imports with a NULL
+material while the plain textures come in fine.
+
+Then **File > New**, and open the editor console: **View > Log** — the log window's
+command box along the bottom is the console. Before importing anything:
+
+```
+OBJ LOAD FILE=..\Textures\<Map>Tex.utx PACKAGE=MyLevel
+```
+
+`PACKAGE=MyLevel` loads the package's contents *into the map*, so the saved map carries
+its own textures and meshes rather than depending on a separate package. The `-embed`
+`.t3d` names everything as `MyLevel.<Group>.<Name>`, so this must come first — import
+before loading and every material resolves to NULL, with no error. Confirm the Texture
+Browser shows a populated `MyLevel`, then **File > Import** the `.t3d` (not File > Open),
+Build Geometry, Lighting and Paths, and save under the new name.
 
 ## Per-map configuration
 
@@ -81,7 +117,7 @@ Survey separates three cases because they need different handling:
 
 ## A new map needs the content step
 
-`utup.py all` skips accrual into the shared content store. Run the content step for a map
+`uttexture.py all` skips accrual into the shared content store. Run the content step for a map
 that has not been through the pipeline before, or it comes out with hundreds of NULL
 surfaces.
 

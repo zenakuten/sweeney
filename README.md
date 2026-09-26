@@ -122,6 +122,21 @@ reads the same copy.
 bash scripts/setup.sh
 ```
 
+**umodel** is needed for texture and mesh work only. It is
+[Gildor's UE Viewer](https://github.com/gildor2/UEViewer), it is not
+redistributable, and Sweeney can fetch it for you:
+
+```bash
+bash scripts/setup.sh --install-umodel
+```
+
+That reads the current download off
+[gildor.org](https://www.gildor.org/en/projects/umodel) and unpacks it into
+`~/.sweeney/umodel`. Off Windows it takes the **Windows** build and runs it through
+`wine` — Gildor's Linux build is 32-bit against `libpng12` and will not start on a
+current distro. Setup records the path as `tools.umodel`; you can point that at your own
+copy instead.
+
 **Requirements:** Python 3.8+, git, and a bash. On Windows that means **Git Bash**, which
 ships with [Git for Windows](https://git-scm.com/download/win) — the scripts are written
 to need nothing beyond what it provides. Python is found as `python3`, `python` or `py`,
@@ -154,6 +169,167 @@ is what orders them.
 **Building on Linux:** `UCC.exe` under Wine is preferred over the native binary, which
 means the Linux machine needs a *Windows* 3374 install present. A Linux install ships no
 `UCC.exe` and cannot build that way at all.
+
+## Updating
+
+```bash
+cd sweeney && git pull
+bash scripts/setup.sh
+```
+
+Re-running setup is the part people skip. A pull brings the skills and tools, but only
+setup writes new keys into `~/.sweeney/config.json` — a release that adds a tool or a path
+leaves the config a version behind until it runs. It is safe to re-run and keeps anything
+you set by hand.
+
+Then, per front end:
+
+| | |
+|---|---|
+| **Claude Code** | `claude plugin update sweeney` |
+| **Copilot CLI / VS Code** | usually nothing — see below |
+
+`setup.sh --install` **symlinks** the skills into `~/.copilot/skills/`, so on Linux and
+macOS a pull updates them where they stand.
+
+**On Windows it usually copies instead.** Creating a symlink needs Developer Mode or an
+elevated shell, and without either the install falls back to copying — which means a pull
+updates the clone and leaves `~/.copilot/skills/` on the old version. Setup tells you when
+this has happened:
+
+```
+  warn  copied rather than linked (no symlink support) -- re-run after updating Sweeney
+```
+
+If you saw that line when you installed, re-run the install step after every pull:
+
+```bash
+bash scripts/setup.sh --install copilot     # or: --install vscode
+```
+
+Turning on Developer Mode (Settings > System > For developers) before installing avoids
+this for good: setup will link instead of copy, and pulls become enough. Everything runs
+under **Git Bash** either way, as at install time.
+
+### If you pull and forget to re-run setup
+
+Nothing breaks. Anything Sweeney cannot find in the config falls back to a sensible
+default — a tool on `PATH`, a work directory inside the install, the bundled toolchain
+under the plugin. Re-running setup makes the config say so explicitly, which is worth
+having when something does go wrong.
+
+## Example: restyle a map with an image model
+
+Rebuilding textures is not only for upscaling. This runs every texture in **DM-Rankin**
+through an anime GAN and ships the result as **DM-RankinAnime**, at the *original*
+resolution — the look changes, the sizes do not.
+
+**1. Describe the project.** One file, in the work directory Sweeney set up
+(`paths.texture_work`, by default `<install>/texture-rebuild`):
+
+```bash
+mkdir -p "$UT2004/texture-rebuild/maps/DM-Rankin"
+cat > "$UT2004/texture-rebuild/maps/DM-Rankin/config.json" <<'JSON'
+{
+  "map_name": "DM-RankinAnime",
+  "package":  "DMRankinAnimeTex",
+  "scale": 1,
+  "restyle": true,
+  "restyle_factor": 4,
+  "model": "realesrgan-x4plus-anime",
+  "models_dir": "/usr/share/realesrgan-ncnn-vulkan/models",
+  "level_shot": "shot1",
+  "detail_mode": "copy",
+  "shared_content": false
+}
+JSON
+```
+
+The project is named for the **source** map; `map_name` is what it ships as.
+
+`restyle_factor` defaults to 4 and is shown only to be explicit; the pipeline drops keys
+that match the default when it rewrites the config.
+
+`scale: 1` with `restyle: true` is the whole trick. An image model has a fixed factor —
+the anime model is 4× — so there is no "run it at 1×". The texture goes up by
+`restyle_factor` and comes back down to its original size, which applies the model's look
+without changing a single dimension. Without `restyle`, `scale: 1` copies every texture
+untouched.
+
+`detail_mode: copy` keeps the stock detail textures: they are close-range grain, and
+restyling them buys nothing.
+
+**2. Run the pipeline.** Needs `umodel` (see Setup), ImageMagick, and a model runner —
+here `realesrgan-ncnn-vulkan`. From the toolchain (`tools.uttexture` in
+`~/.sweeney/config.json`):
+
+```bash
+./uttexture.py all DM-Rankin
+```
+
+`all` is survey, extract, upscale, package and both `.t3d` variants. For Rankin — 57
+textures and 49 meshes — that was **10m21s** on one GPU, most of it in the model.
+
+```
+  57 textures to upscale, 49 meshes
+  [ 1/57] anubis-water   512x512 restyled via 4x +alpha
+  [ 3/57] bas01HA       1024x1024 restyled via 4x
+  ...
+  23 of the map's meshes carry a collision hull
+  57 textures, 147.0 MB of TGA -> <install>/DMRankinAnimeTex/Textures
+  36 Shader wrappers carry Detail/SurfaceType
+```
+
+**3. Build the package.** Exactly as the tool prints it:
+
+```bash
+# EditPackages must list DMRankinAnimeTex and nothing else already built
+cd "$UT2004/System" && rm -f DMRankinAnimeTex.u && ./UCC.exe make
+mv DMRankinAnimeTex.u ../Textures/DMRankinAnimeTex.utx
+```
+
+Rankin came out at **32.2 MB**, against roughly 500 MB for the same map at 4×.
+
+**4. Import the map.** Take the `EditPackages` line back out *before* starting the editor
+— left in, UnrealEd preloads the package under its own name and every material imports as
+NULL.
+
+Start UnrealEd and **File > New**, then open the console: **View > Log**. The log window
+has a command box along the bottom — that box *is* the editor console. Load the package's
+contents into the map:
+
+```
+OBJ LOAD FILE=..\Textures\DMRankinAnimeTex.utx PACKAGE=MyLevel
+```
+
+`PACKAGE=MyLevel` is the whole point: the objects come in under `MyLevel`, so the saved
+map carries its own textures and meshes instead of depending on a separate package. It
+has to happen **before** the import, because the `-embed.t3d` names everything as
+`MyLevel.<Group>.<Name>` — import first and every material resolves to NULL, silently.
+Check the Texture Browser lists `MyLevel` and is populated before going on.
+
+Then **File > Import** the `-embed.t3d` (not File > Open), Build Geometry, Lighting and
+Paths, and save as `DM-RankinAnime`.
+
+**5. Check it.** These catch the failures that build clean and are wrong in game:
+
+```bash
+python3 tools/check_map.py   DM-Rankin     # actor counts, NULL surfaces, lost zones
+python3 tools/check_hulls.py DM-Rankin     # collision hulls against the source
+```
+
+### Variations
+
+| Want | Change |
+|---|---|
+| 4× upscale instead of restyle | `"scale": 4`, drop `restyle` |
+| A different look | `model` — any model in `models_dir` |
+| One texture kept as-is | add it to `skip_upscale` |
+| One texture through a different model | `model_overrides: {"BrickWall12c": "realesrgan-x4plus"}` |
+
+The anime model flattens photographic grain into painterly strokes, which is the point
+here but a defect when upscaling. `tools/check_detail.py <Map> --try <model>` grades how
+much detail each texture kept and prints a ready-made `model_overrides` block.
 
 ## Live testing
 

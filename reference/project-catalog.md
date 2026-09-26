@@ -47,8 +47,10 @@ actions.
 **ut3converter** — UT3 → UT2004 map and content conversion. See the `ut3-map-conversion`
 skill. `FORMAT.md` documents UE2 map and package structure in depth.
 
-**utupscaler** — rebuilds any map's textures through an image model, at any scale. See the
-`ut2004-textures` skill. Its `utup/ue2.py` is a working UE2 package reader.
+**utupscaler** — the origin of the texture-rebuild toolchain that now ships with Sweeney
+as **`uttexture`** (`tools/uttexture/`). Sweeney's copy is the one to change; the original
+was a learning project, is not public, and is being retired. See the `ut2004-textures`
+skill. Its `uttexture/ue2.py` is a working UE2 package reader that several checks use.
 
 **roughinery** — the shipped 4K rebuild of DM-1on1-Roughinery, and utupscaler's worked
 example. Consult for how a finished map turned out, not as the current pipeline.

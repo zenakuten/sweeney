@@ -15,16 +15,17 @@ ENGINE_DIR="${SWEENEY_ENGINE:-$SWEENEY_HOME/engine/ut2004}"
 CONFIG="$SWEENEY_HOME/config.json"
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-INSTALL_COPILOT=0; INSTALL_VSCODE=0
+INSTALL_COPILOT=0; INSTALL_VSCODE=0; INSTALL_UMODEL=0
 for arg in "$@"; do
   case "$arg" in
     --install) ;;
     copilot|--install=copilot) INSTALL_COPILOT=1 ;;
     vscode|--install=vscode)   INSTALL_VSCODE=1 ;;
+    --install-umodel)          INSTALL_UMODEL=1 ;;
     -h|--help)
       sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
       echo
-      echo "Usage: setup.sh [--install copilot|vscode]"
+      echo "Usage: setup.sh [--install copilot|vscode] [--install-umodel]"
       exit 0 ;;
   esac
 done
@@ -158,20 +159,51 @@ say
 
 # --------------------------------------------------------------- python toolchains
 say "Python toolchains"
-UT3CONV=""; UTUPSCALER=""
+UT3CONV=""
 if [ -n "$INSTALL_ROOT" ]; then
   [ -f "$INSTALL_ROOT/ut3converter/ut3conv.py" ] && UT3CONV="$INSTALL_ROOT/ut3converter"
-  [ -f "$INSTALL_ROOT/utupscaler/utup.py" ]      && UTUPSCALER="$INSTALL_ROOT/utupscaler"
 fi
-[ -n "$UT3CONV" ]    && ok "ut3converter at $UT3CONV"       || warn "ut3converter not found (optional)"
-[ -n "$UTUPSCALER" ] && ok "utupscaler at $UTUPSCALER"      || warn "utupscaler not found (optional)"
+[ -n "$UT3CONV" ] && ok "ut3converter at $UT3CONV" || warn "ut3converter not found (optional)"
+
+# The texture-rebuild toolchain ships with Sweeney rather than being found.
+UTTEXTURE=""
+[ -f "$PLUGIN_ROOT/tools/uttexture/uttexture.py" ] && UTTEXTURE="$PLUGIN_ROOT/tools/uttexture"
+[ -n "$UTTEXTURE" ] && ok "texture-rebuild toolchain at $UTTEXTURE" \
+                     || warn "texture-rebuild toolchain missing from the plugin"
+
+# umodel exports meshes for the rebuild. On PATH is enough; note it if not.
+UMODEL=""
+for c in "$SWEENEY_HOME/umodel/umodel_64.exe" "$SWEENEY_HOME/umodel/umodel.exe" \
+         "$SWEENEY_HOME/umodel/umodel" "$HOME/umodel/umodel_64.exe" \
+         "$HOME/umodel/umodel" "$HOME/.local/bin/umodel"; do
+  [ -f "$c" ] && { UMODEL="$c"; break; }
+done
+[ -z "$UMODEL" ] && command -v umodel >/dev/null 2>&1 && UMODEL="$(command -v umodel)"
+# Not shipped with Sweeney and not redistributable, so it is fetched on request.
+if [ -z "$UMODEL" ] && [ "$INSTALL_UMODEL" -eq 1 ]; then
+  say "  fetching umodel (gildor.org)"
+  if SWEENEY_HOME="$SWEENEY_HOME" bash "$PLUGIN_ROOT/scripts/install-umodel.sh"; then
+    [ -f "$SWEENEY_HOME/umodel/.path" ] && UMODEL="$(cat "$SWEENEY_HOME/umodel/.path")"
+  fi
+fi
+if [ -n "$UMODEL" ]; then
+  ok "umodel at $UMODEL"
+else
+  warn "umodel not found -- the texture-rebuild toolchain cannot export without it."
+  warn "  get it with: bash scripts/setup.sh --install-umodel"
+fi
+
+# Per-map rebuild data runs to gigabytes, so it lives in the install, never in
+# the plugin checkout.
+TEXWORK=""
+[ -n "$INSTALL_ROOT" ] && TEXWORK="$INSTALL_ROOT/texture-rebuild"
 say
 
 # ------------------------------------------------------------------------ config
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
 UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" BUILD_DATE="$BUILD_DATE" BUILD_COMMIT="$BUILD_COMMIT" CLIENT_ROOT="$CLIENT_ROOT" \
-UT3CONV="$UT3CONV" UTUPSCALER="$UTUPSCALER" PLUGIN_ROOT="$PLUGIN_ROOT" \
+UT3CONV="$UT3CONV" UTTEXTURE="$UTTEXTURE" UMODEL="$UMODEL" TEXWORK="$TEXWORK" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" "$PY" - <<'PY'
 import json, os, datetime
 
@@ -196,7 +228,11 @@ cfg = {
     "plugin_root": val("PLUGIN_ROOT"),
     "tools": {
         "ut3converter": val("UT3CONV"),
-        "utupscaler": val("UTUPSCALER"),
+        "uttexture": val("UTTEXTURE"),
+        "umodel": val("UMODEL"),
+    },
+    "paths": {
+        "texture_work": val("TEXWORK"),
     },
 }
 

@@ -24,4 +24,4 @@ After it finishes:
   error rather than trying to work around it.
 
 Then summarise in two or three lines what was found: engine source path and `.uc`
-count, install root, and which of `ut3converter` / `utupscaler` are available.
+count, install root, and whether `ut3converter` is available, and where the bundled `uttexture` toolchain is.
