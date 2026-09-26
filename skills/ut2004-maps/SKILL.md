@@ -99,6 +99,46 @@ Writing a hull into an ASE: a second `*GEOMOBJECT` whose `*NODE_NAME` starts wit
 each triangle **reversed**, since the importer rebuilds every poly back to front and the
 winding decides inside from outside.
 
+### A mesh with no CollisionModel can still hand you one
+
+`CollisionModel` is reached by walking the mesh's serialised layout. When a mesh has
+**none**, that walk reads whatever follows it, and any value that happens to index a
+`Model` export looks valid — including a *brush's* model. DM-1on1-Lea's `idomacrate`
+resolved to `Model80`, which belongs to `Brush77`; DM-Corrugation's `pipeend` did the
+same. Both passed an "is it a `Model`?" check, which is the only check most readers make.
+
+Carry that into a rebuild and the mesh gets a hull built from unrelated brush geometry —
+and it is run through the *mesh actor's* transform, not the brush's, so it lands hundreds
+of units from either object, in open air. An invisible wall in mid-air, with nothing to
+see at that spot in the editor. The original map is fine, because the engine sees a null
+`CollisionModel` and uses the exact triangles.
+
+**Require the resolved model's bounds to overlap the mesh's own.** A real collision model
+bounds the mesh it belongs to. Two meshes in a 20-map set were affected, and neither was
+detectable by comparing hull extents against the source — the extents matched, because
+the same wrong hull was read on both sides.
+
+### An open hull breaks network clients only
+
+A hull with fewer than four faces encloses no volume, and the engine answers *"is this
+point solid"* differently from *"does this sweep hit"* for one.
+
+Ordinary movement is all swept, so **offline play, the listen-server host and bots are
+unaffected**. A network client also *places* its pawn: `PlayerController`'s
+`ClientAdjustPosition` calls `SetLocation`. When that placement test disagrees with the
+sweep, the client cannot accept the correction — it falls further behind every tick and
+the player warps between two points, the offset growing until something breaks the loop.
+
+Recognise it by who is affected: fine offline, fine for the host, fine for bots, broken
+only for a remote client. That pattern rules out the map data before you start comparing
+it, because every side loads the same file.
+
+**Do not fix it by closing the hull.** Extruding it into a slab gives the mesh a back face
+and four side faces that never existed — real surfaces with nothing rendered at them, so
+players walk up onto them and bump into them. Thinning the slab shrinks those faces
+without removing them. Drop the hull instead and let the mesh use its own triangles,
+which is what the engine does with the original.
+
 ## Carried meshes come back untextured
 
 Two causes, both silent, both leaving a handful of meshes in flat grey default texture

@@ -123,6 +123,27 @@ animation is derived client-side from replicated movement rather than replicated
 that script replication on a `Pawn` is rate-limited to non-owning clients. Both have
 cost real time to rediscover.
 
+## "Only the remote client is broken" is a diagnosis, not a symptom
+
+When a fault appears for a network client but **not** offline, **not** for the
+listen-server host and **not** for bots, the map data is already ruled out — every side
+loads the same file. What differs is the question being asked of it.
+
+Ordinary movement is swept: `MoveActor` traces from A to B. A network client additionally
+*places* its pawn, because `ClientAdjustPosition` calls `SetLocation`, and only an
+autonomous proxy ever runs that path. Geometry that answers those two questions
+differently — a collision hull that encloses no volume is the case seen in practice —
+breaks the client alone. `SetLocation` fails, the correction is never applied, the client
+falls further behind every tick, and the player warps between two positions.
+
+Reach for this before diffing map data. Ask who is affected first: host and bots are
+server-side and unpredicted, so if they are clean the server's collision is clean.
+
+Instrumenting beats guessing here. A temporary probe in the player controller that traces
+the player box when a correction cannot be applied, and logs the actor it hits, named the
+culprit in one run after days of static comparison found nothing. See the
+`ut2004-maps` skill for what the culprit turned out to be.
+
 ## Testing
 
 Online behaviour must be tested online — a practice session proves nothing about it.

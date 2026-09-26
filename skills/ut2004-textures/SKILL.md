@@ -115,6 +115,8 @@ Each is silent — the build is clean and the map is wrong in game. All are cove
 | a cut-out drawn as a solid rectangle | Shader wrapper with `Opacity=None` |
 | a few meshes in flat grey | mesh material slots not bound — check both umodel dump shapes |
 | players snag, or a gap seals | collision hull carried when it should not be, or missing |
+| an invisible wall in open air, nothing there in the editor | a mesh with no `CollisionModel` resolved to some other object's model, and the rebuild carried it |
+| warping between two points, but only for a remote client | a carried hull that encloses no volume — placement and sweep disagree |
 
 ## Caching and scratch
 
