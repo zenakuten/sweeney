@@ -224,6 +224,32 @@ Rebuilding textures is not only for upscaling. This runs every texture in **DM-R
 through an anime GAN and ships the result as **DM-RankinAnime**, at the *original*
 resolution — the look changes, the sizes do not.
 
+### Texture tool prerequisites
+
+The texture pipeline uses three tools that Sweeney does not bundle:
+
+- **Python packages:** `numpy` and `Pillow` (`py -m pip install numpy Pillow` on Windows,
+  or `python3 -m pip install numpy Pillow` on Linux).
+- **ImageMagick:** install it from
+  [imagemagick.org](https://imagemagick.org/script/download.php). On Windows, use the
+  normal installer and enable its option to add ImageMagick to `PATH`; no SDK or Python
+  binding is needed. On Ubuntu, `sudo apt install imagemagick`.
+- **Real-ESRGAN ncnn Vulkan:** download the archive for your OS from the
+  [latest release](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest)
+  and extract it. Add the extracted directory to `PATH`; keep its `models/` directory
+  alongside the executable. It needs a Vulkan-capable GPU and current graphics driver.
+
+Open a new Git Bash after changing `PATH`, then check that both commands resolve:
+
+```bash
+magick -version
+realesrgan-ncnn-vulkan -h
+```
+
+On Windows, JSON paths should use forward slashes, for example
+`C:/Tools/realesrgan-ncnn-vulkan/models`. Git Bash commands use paths such as
+`/c/Tools/...`, but Python reads `config.json` directly and needs the Windows form.
+
 **1. Describe the project.** One file, in the work directory Sweeney set up
 (`paths.texture_work`, by default `<install>/texture-rebuild`):
 
@@ -237,7 +263,7 @@ cat > "$UT2004/texture-rebuild/maps/DM-Rankin/config.json" <<'JSON'
   "restyle": true,
   "restyle_factor": 4,
   "model": "realesrgan-x4plus-anime",
-  "models_dir": "/usr/share/realesrgan-ncnn-vulkan/models",
+  "models_dir": "C:/Tools/realesrgan-ncnn-vulkan/models",
   "level_shot": "shot1",
   "detail_mode": "copy",
   "shared_content": false
@@ -246,6 +272,9 @@ JSON
 ```
 
 The project is named for the **source** map; `map_name` is what it ships as.
+Change `models_dir` to the extracted release's `models/` directory. The value above is a
+Windows example; a typical Linux value is
+`/opt/realesrgan-ncnn-vulkan/models`.
 
 `restyle_factor` defaults to 4 and is shown only to be explicit; the pipeline drops keys
 that match the default when it rewrites the config.
@@ -264,7 +293,8 @@ here `realesrgan-ncnn-vulkan`. From the toolchain (`tools.uttexture` in
 `~/.sweeney/config.json`):
 
 ```bash
-./uttexture.py all DM-Rankin
+py uttexture.py all DM-Rankin          # Windows, from Git Bash
+# python3 uttexture.py all DM-Rankin   # Linux
 ```
 
 `all` is survey, extract, upscale, package and both `.t3d` variants. For Rankin — 57
@@ -314,8 +344,9 @@ Paths, and save as `DM-RankinAnime`.
 **5. Check it.** These catch the failures that build clean and are wrong in game:
 
 ```bash
-python3 tools/check_map.py   DM-Rankin     # actor counts, NULL surfaces, lost zones
-python3 tools/check_hulls.py DM-Rankin     # collision hulls against the source
+py tools/check_map.py   DM-Rankin     # actor counts, NULL surfaces, lost zones
+py tools/check_hulls.py DM-Rankin     # collision hulls against the source
+# Use python3 instead of py on Linux.
 ```
 
 ### Variations

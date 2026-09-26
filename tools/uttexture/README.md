@@ -7,6 +7,22 @@ buildable `<Map>Tex` package, and rewrites the map's `.t3d` to match.
 Generalised from the `../roughinery` project, which shipped
 DM-1on1-Roughinery and is kept as the worked example.
 
+## Requirements
+
+- Python 3 with `numpy` and `Pillow`
+- ImageMagick's `magick` command
+- `realesrgan-ncnn-vulkan` and its model files
+- `umodel`, configured by Sweeney's setup
+
+Install the normal ImageMagick package from
+https://imagemagick.org/script/download.php; only its `magick` command is needed, not an
+SDK or Python binding. Download the model runner from
+https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest. The runner's release
+archive contains a `models/` directory; set `models_dir` in the map's `config.json` to
+that native path and put the executable on `PATH`. On Windows, run from Git Bash, invoke
+Python as `py`, and use a JSON path such as
+`C:/Tools/realesrgan-ncnn-vulkan/models` rather than `/c/Tools/...`.
+
 ## Use
 
 ```bash

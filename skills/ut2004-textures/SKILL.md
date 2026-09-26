@@ -15,6 +15,16 @@ It needs `numpy` and `Pillow`, plus `magick` (ImageMagick), an image model runne
 `realesrgan-ncnn-vulkan`, `UCC` to build the package, and **`umodel`** — Gildor's UE
 Viewer — which every texture and mesh export goes through.
 
+Install ImageMagick from https://imagemagick.org/script/download.php and download the
+appropriate archive from
+https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/latest. Add both executables
+to `PATH`; the Real-ESRGAN archive includes a `models/` directory, whose native path goes
+in each project's `models_dir`. On Windows use a path such as
+`C:/Tools/realesrgan-ncnn-vulkan/models`, not a Git Bash `/c/...` path, because Python
+reads the JSON directly. Install the Python dependencies with
+`py -m pip install numpy Pillow` on Windows or
+`python3 -m pip install numpy Pillow` on Linux.
+
 umodel is not redistributable, so it is fetched on request:
 `bash scripts/setup.sh --install-umodel` puts it in `~/.sweeney/umodel` and records
 `tools.umodel`. Off Windows this is the Windows build run through `wine`; Gildor's Linux
