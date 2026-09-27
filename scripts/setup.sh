@@ -168,12 +168,28 @@ fi
 # UnrealEd's command bridge is a Windows helper. On Linux it runs under the same
 # Wine prefix as UnrealEd; on Windows it runs directly.
 UNREALED_SEND=""
+UNREALED_LOG=""
+UNREALED_UI=""
 if [ -n "$INSTALL_ROOT" ]; then
   [ -f "$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-send.exe" ] \
     && UNREALED_SEND="$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-send.exe"
+  # Reads the log WINDOW's text. Not a nicety: System/UnrealEd.log on disk lags
+  # the window by an unbounded amount, so it cannot confirm a command landed.
+  [ -f "$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-log.exe" ] \
+    && UNREALED_LOG="$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-log.exe"
+  # Drives the editor by window message rather than keystroke: no focus needed,
+  # reaches the Build Options dialog, and cannot be dropped by a busy editor.
+  [ -f "$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-ui.exe" ] \
+    && UNREALED_UI="$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-ui.exe"
 fi
 [ -n "$UNREALED_SEND" ] && ok "UnrealEd command bridge at $UNREALED_SEND" \
                          || warn "UnrealEd command bridge not found (optional)"
+[ -n "$UNREALED_UI" ] && ok "UnrealEd UI driver at $UNREALED_UI" \
+                       || warn "UnrealEd UI driver not found -- build settings and
+       dialogs cannot be reached without it (optional)"
+[ -n "$UNREALED_LOG" ] && ok "UnrealEd log reader at $UNREALED_LOG" \
+                        || warn "UnrealEd log reader not found -- editor automation
+       cannot confirm commands without it (optional)"
 
 # The texture-rebuild toolchain ships with Sweeney rather than being found.
 UTTEXTURE=""
@@ -239,6 +255,8 @@ cfg = {
     "tools": {
         "ut3converter": val("UT3CONV"),
         "unrealed_send": val("UNREALED_SEND"),
+        "unrealed_log": val("UNREALED_LOG"),
+        "unrealed_ui": val("UNREALED_UI"),
         "uttexture": val("UTTEXTURE"),
         "umodel": val("UMODEL"),
     },

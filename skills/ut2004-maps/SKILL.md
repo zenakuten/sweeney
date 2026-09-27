@@ -9,6 +9,12 @@ A `.t3d` is a **text** export of a map. That one fact explains most of this skil
 format cannot represent everything a `.ut2` holds, and what it cannot represent is lost
 silently on every round trip. Nothing errors; the map builds, saves and plays.
 
+**Use a fresh `UnrealEd.exe` process for every map.** Never close one map and load the
+next in the same editor process: shared `MyLevel` state, loaded packages and stale object
+handles can leak between them. For non-default build settings, use the Build Options
+dialog; the editor hardcodes its initial values and ini/default edits do not take effect.
+See the `ut2004-editor-automation` skill when driving these steps externally.
+
 **Verify a round trip by comparing the result against the source map** — actor counts per
 class, NULL surface materials, zone assignments. Never judge an import by whether the
 editor finished without complaining.

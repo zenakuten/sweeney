@@ -510,8 +510,9 @@ def ensure_import_path(dst, path, class_name="Material"):
         else:
             cls = "Package"
         for j, have in enumerate(dst.imports):
-            if (dst.names[have["name"]][0] == part and have["outer"] == ref
-                    and dst.names[have["class_name"]][0] == cls):
+            if (dst.names[have["name"]][0].lower() == part.lower()
+                    and have["outer"] == ref
+                    and dst.names[have["class_name"]][0].lower() == cls.lower()):
                 ref = -(j + 1)
                 break
         else:
@@ -533,8 +534,8 @@ def _ensure_import(src, dst, ref):
     cls_name = src.names[entry["class_name"]][0]
     name = src.names[entry["name"]][0]
     for i, have in enumerate(dst.imports):
-        if (dst.names[have["name"]][0] == name
-                and dst.names[have["class_name"]][0] == cls_name
+        if (dst.names[have["name"]][0].lower() == name.lower()
+                and dst.names[have["class_name"]][0].lower() == cls_name.lower()
                 and have["outer"] == outer):
             return -(i + 1)
     dst.imports.append({"class_package": dst.ensure_name(
@@ -556,8 +557,8 @@ def _ensure_outer(src, dst, ref):
     cls = _ensure_import(src, dst, parent["class_ref"])
     outer = _ensure_outer(src, dst, parent["outer"])
     for i, have in enumerate(dst.exports):
-        if (dst.names[have["name"]][0] == name and have["outer"] == outer
-                and have["class_ref"] == cls):
+        if (dst.names[have["name"]][0].lower() == name.lower()
+                and have["outer"] == outer and have["class_ref"] == cls):
             return i + 1
     # A group is a UPackage with no data of its own, but its export is NOT
     # zero-length: UObject::Serialize still writes the tagged property list,

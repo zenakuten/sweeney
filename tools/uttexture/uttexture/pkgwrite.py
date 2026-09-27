@@ -97,8 +97,18 @@ class RawPackage:
     # -- names ---------------------------------------------------------------
 
     def name_index(self, s):
+        """The index of a name, matched WITHOUT REGARD TO CASE, as UE2 does.
+
+        FName comparison is case-insensitive, so a package holding "GamePlay"
+        already has "Gameplay". Comparing exactly appends a second entry, and
+        everything keyed on the index then fails to match the object that is
+        already there -- DM-Pending's mover01floormetal was carried into a new
+        "Gameplay" group as an orphan while the map's actors went on pointing at
+        the old "GamePlay" one, so the mesh kept the hull-less version.
+        """
+        lowered = s.lower()
         for i, (n, _f) in enumerate(self.names):
-            if n == s:
+            if n.lower() == lowered:
                 return i
         return None
 
