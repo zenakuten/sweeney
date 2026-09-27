@@ -29,7 +29,8 @@ Python as `py`, and use a JSON path such as
 ./uttexture.py survey   DM-Deck      # what it uses, and how each texture is reached
 ./uttexture.py extract  DM-Deck      # pull them out, read their properties
 ./uttexture.py upscale  DM-Deck      # run the upscaler
-./uttexture.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc
+./uttexture.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc + make.ini
+./uttexture.py meshes   DM-Deck      # after ucc make: copy the map's meshes in
 ./uttexture.py t3d      DM-Deck      # export the map and rewrite it
 ./uttexture.py all      DM-Deck
 ```
@@ -53,6 +54,8 @@ ever appear on brush polygons or in actor `Skins()` overrides, and it says so.
 ```
 uttexture.py       CLI
 uttexture/              ue2, survey, extract, manifest, upscale, pkg, t3d, inject, compare
+                   pkgwrite + carry: write a UE2 package, copy a mesh export into one
+                   ase: the old ASE writer, for geometry with no UE2 export behind it
 models/            .safetensors weights for the torch path
 scans/             ambientCG material scans for detail injection
 .rocmlibs/         shim that makes python-pytorch-rocm importable here
@@ -154,14 +157,17 @@ making the stock map a dependency. So `package` carries them into `<Map>Tex` and
 
 Two things this has to work around:
 
-- **Static meshes cannot round-trip in their exported form.** `UCC.exe
-  batchexport <Map>.ut2 StaticMesh T3D` is the only way out, but the Static Mesh
-  browser imports `.ase`/`.lwo`/`.obj` only, so `uttexture/mesh.py` converts the
-  triangle soup to ASE. It is loaded with `#exec NEW STANDALONE
-  StaticMeshFactory`, *not* `#exec STATICMESH IMPORT` -- that exec takes
-  LightWave `.lwo` only (`UnEdSrvExecImporters.cpp:426`). The ASE binds its
-  `*BITMAP` against an already-loaded texture, so mesh imports are emitted after
-  the texture imports.
+- **Static meshes are not compiled in at all.** They are copied out of the source
+  map export by export by `uttexture/carry.py`, run as `uttexture.py meshes
+  <Map>` between `ucc make` and the move to `Textures/`. There is no `#exec` for
+  a static mesh worth using: the Static Mesh browser imports `.ase`/`.lwo`/`.obj`
+  only, and an interchange format carries triangles -- so a collision hull built
+  from quads comes back re-tessellated, and an **open** hull re-tessellated
+  changes which side the engine calls solid. That is four invisible walls in
+  DM-1on1-Roughinery from one mesh, and all 33 of its hulls were affected.
+  Copying the bytes cannot change the geometry. `<Map>Tex` is therefore not
+  reproducible from its `.uc` alone, and `uttexture/ase.py` keeps the old writer
+  for geometry that has no UE2 export behind it, such as a UT3 conversion.
 - **Composites cannot be rebuilt**, and a level shot is usually a
   MaterialSequence over two frames. `level_shot` names one plain texture to use
   as the `Screenshot` instead; anything else composite is listed and left, since

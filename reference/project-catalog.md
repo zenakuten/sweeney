@@ -40,7 +40,9 @@ query and control a live game. Covered by the `ut2004-live-testing` skill. Worth
 for: JSON-RPC over HTTP implemented directly on `IpDrv.TcpLink` using the listen/accept
 pattern from `UWeb.WebServer` (not UWeb itself — the stock web connection rejects
 non-form-urlencoded POST bodies), and the `LinkedReplicationInfo` route for client-side GUI
-actions.
+actions. The same repository also holds the external UnrealEd command bridge covered by
+the `ut2004-editor-automation` skill; the bridge is verified but is not itself an MCP
+server until its local stdio wrapper is added.
 
 ## Tools
 

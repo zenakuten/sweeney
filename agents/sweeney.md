@@ -128,6 +128,7 @@ and the plugin source is usually not present.
 | `ut2004-gui` | menus, HUD, Canvas, scoreboards |
 | `ut2004-packages` | `.u`/`.utx`, textures, meshes, sounds, the UE2 package format |
 | `ut2004-maps` | `.t3d`, UnrealEd, BSP, terrain, collision |
+| `ut2004-editor-automation` | driving a running UnrealEd through its external command bridge |
 | `ut2004-live-testing` | driving a running server, logs, screenshots |
 | `ut3-map-conversion` | converting UT3 maps with `ut3converter` |
 | `ut2004-textures` | remaking a map's textures with an image model |

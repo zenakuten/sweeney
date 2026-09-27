@@ -75,29 +75,50 @@ After generating, `grep -c "<SourceMap>\." out/*.t3d` must be 0.
 
 ## Static mesh collision
 
-Two opposite failures, and one flag decides which applies.
+`CollisionModel` is a **separate object in the package**, not part of the mesh. So is its
+`Polys`, and a mesh's `KPhysicsProps` is a third. None of them travel with the mesh's own
+bytes, and none of them survive an export to a text or interchange format.
 
-`CollisionModel` is a **separate object in the package**, not part of the mesh. An ASE
-round trip produces none, so the engine falls back to colliding against the render
-triangles.
+**Carry a mesh by copying its export, not by round-tripping it.** An ASE (or any triangle
+format) re-tessellates a hull built from quads, and a hull whose edges are not each shared
+by exactly two faces — an **open** hull — has no defined inside, so re-tessellating one
+changes which side the engine calls solid. DM-1on1-Roughinery's `traeger_512` is nine
+quads; the ASE rebuild made eighteen triangles and four invisible walls in a map with
+twenty years of play behind it. All 33 of that map's hulls came back re-tessellated.
+`uttexture/carry.py` copies the export bytes and remaps only the numbering.
 
-- **Some meshes need the hull.** A thin, rotated, non-uniformly scaled prop catches a
-  player capsule on its end faces without one — planks that became impassable. The
-  geometry checks all pass, because the geometry *is* identical; the missing data sits
-  beside the mesh.
-- **Some meshes must not have one.** `UseSimpleBoxCollision` defaults to **true** and
-  decides whether an extent trace hits the hull or the exact triangles. Retail packages
-  set it **false** on selected meshes, and an ASE round trip cannot carry that flag — the
-  rebuilt mesh always comes back true. Emitting a hull for such a mesh makes the engine
-  honour one it never used, **filling every gap the exact geometry left open**. An
-  invisible wall.
+Two flags decide whether the hull is consulted at all, and they are ordinary properties, so
+a verbatim copy keeps them:
 
-So: carry the hull only when the source mesh does not have `UseSimpleBoxCollision=False`.
+- `UseSimpleBoxCollision` defaults to **true** and gates **extent** traces — a player
+  capsule. Retail packages set it **false** on selected meshes; honouring a hull the engine
+  never used **fills every gap the exact geometry left open**, which is an invisible wall.
+- `UseSimpleLineCollision` defaults to **false** and gates **zero-extent** traces — a hit
+  scan. A mesh can therefore have a hull that stops players and never affects shots.
 
-Writing a hull into an ASE: a second `*GEOMOBJECT` whose `*NODE_NAME` starts with
-**`MCDCX`** is read as collision geometry — plain `MCD` is ignored. Triangulate and write
-each triangle **reversed**, since the importer rebuilds every poly back to front and the
-winding decides inside from outside.
+A mesh that must not have a hull and one that must are both silent failures: the geometry
+checks pass either way, because the geometry *is* identical. What differs sits beside the
+mesh.
+
+### Copying an export between packages
+
+Names and object references are **package-relative**, so the bytes cannot simply be moved;
+every index has to be looked up in the source and rewritten as the destination numbers it.
+Four things bite:
+
+- A name written with **flags 0** loads back as `NAME_None`
+  (`Core/Src/UnLinker.cpp:359`), and the engine then blames an *export* for having no name.
+  Use `0x00070010`, or carry the source's flags.
+- A **group** (`Core.Package`) export has `SerialSize` **1**, not 0 — the lone `None`
+  property terminator. `SerialOffset` is written only when the size is non-zero, so a
+  zero-length group shifts every export entry after it.
+- `TLazyArray` stores an **absolute file offset** to the end of its data and the loader
+  seeks there, so existing payloads must keep their offsets — a texture's mips and
+  `UStaticMesh.RawTriangles` both use it. Adding one name to a package is enough to break
+  every one of them.
+- A mesh's **CollisionModel has the mesh as its Outer**, so the mesh's export slot must
+  exist before the Model is built, or one gets invented and the package ends up with a
+  stub duplicate of every hulled mesh.
 
 ### A mesh with no CollisionModel can still hand you one
 
@@ -144,11 +165,12 @@ which is what the engine does with the original.
 Two causes, both silent, both leaving a handful of meshes in flat grey default texture
 while BSP surfaces look fine:
 
-1. **An ASE binds `*BITMAP` by object name** against already-loaded materials, so each
-   slot must name what the rebuilt package actually contains — `bas08go_SH`, not
-   `bas08go`. Meshes therefore have to be built *after* the wrappers exist. A material
-   left in its own foreign package has nothing to bind to and needs an explicit `Skins()`
-   with the full original path.
+1. **A material reference that does not resolve comes back NULL, silently.** UE2 does not
+   error on an import whose `ClassPackage.ClassName` is wrong, or that names an object
+   that is not there. A generated texture package's materials are subobjects of the
+   generated **class**, which is named after the package, so `<Pkg>.<Pkg>.<Name>` needs a
+   `Core.Class` outer and `<Pkg>.<Group>.<Name>` a `Core.Package` one. The tell is a T3D
+   export printing `Texture None` where a working package prints the object's name.
 2. **Any actor can draw a static mesh.** A `Mover` with `DrawType=DT_StaticMesh` is how
    lifts and doors are built. Injecting `Skins()` only into `StaticMeshActor` leaves every
    lift and door untextured.

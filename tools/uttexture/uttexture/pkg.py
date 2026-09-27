@@ -175,6 +175,48 @@ def to_tga(png, tga, width, height, sharpen="", injection=None):
     write_tga(tga, width, height, bytes(bgra))
 
 
+# Everything the generated .uc needs loaded to compile: it is
+# `class <Pkg> extends Object; abstract;` plus #exec imports, so the engine
+# packages the importers live in and nothing else.
+MAKE_PACKAGES = ("Core", "Engine", "Fire", "Editor", "UnrealEd", "IpDrv", "UWeb")
+
+
+def windows_ini_path(path):
+    """A Z:-drive path for UCC's -ini=: it is a Windows program under Wine."""
+    if os.name == "nt":
+        return path
+    return "Z:" + os.path.abspath(path).replace("/", "\\")
+
+
+def write_make_ini(install, pkg_dir, package):
+    """A make.ini listing only this package, and return its path.
+
+    EditPackages in System/UT2004.ini is a trap for this build. UCC loads every
+    entry it is given even when it skips compiling it, and UEditorEngine::Init
+    LoadPackage()s each one BY NAME at startup -- with ../Textures/*.utx on the
+    Paths, leaving <Pkg>Tex listed makes the editor load the finished package
+    before the .t3d import, and the generated materials, which are subobjects of
+    the generated class, stay attached to that copy instead of appearing under
+    MyLevel. Every surface then imports with a NULL material. Keeping the list in
+    its own ini beside the package means UT2004.ini never mentions it at all.
+    """
+    out = os.path.join(pkg_dir, "make.ini")
+    lines, done = [], False
+    with open(os.path.join(install, "System", "UT2004.ini"),
+              encoding="latin-1") as f:
+        for line in f.read().splitlines():
+            if line.startswith("EditPackages="):
+                if not done:
+                    lines += ["EditPackages=%s" % p for p in MAKE_PACKAGES]
+                    lines.append("EditPackages=%s" % package)
+                    done = True
+                continue
+            lines.append(line)
+    with open(out, "w", encoding="latin-1") as f:
+        f.write("\r\n".join(lines) + "\r\n")
+    return out
+
+
 def build(project, manifest, out_root=None, log=print):
     from .project import SCANS
     package = project.package
@@ -236,7 +278,7 @@ def build(project, manifest, out_root=None, log=print):
     # when it ships under a new name -- see uttexture/embedded.py. They are appended
     # AFTER the upscaled imports on purpose: an ASE binds its *BITMAP against
     # textures already loaded in the package.
-    meshes, sounds, carried, unbuildable = [], [], [], []
+    sounds, carried, unbuildable = [], [], []
     mesh_entries = []
     carried_refs, uncarried = [], []
     carried_details, carried_shown = [], []
@@ -278,15 +320,11 @@ def build(project, manifest, out_root=None, log=print):
             imports.append("#exec TEXTURE IMPORT " + " ".join(opts))
             carried.append("%s.%s" % (group, name) if group else name)
             carried_refs.append("%s.%s" % (group, name) if group else name)
-        # A map's own meshes and sounds have to travel with it: see mesh.py on
-        # why a reference left on the source map is a broken server, not just a
-        # wasted download. Every mesh is carried, group and all -- the generic
-        # factory exec's PACKAGE= creates groups, so <Pkg>.<Group>.<Name> is
-        # reproducible and the references need only their package name swapped.
-        # The build itself waits until the wrappers and rebuilt composites
-        # exist: an ASE binds *BITMAP by OBJECT NAME, so a slot whose material
-        # this package renamed (bas08go -> bas08go_SH) has to be written under
-        # the new name or the slot imports with no material at all.
+        # A map's own meshes and sounds have to travel with it: a reference
+        # left on the source map is a broken server, not just a wasted
+        # download, because the net package map matches by GUID. Meshes are
+        # copied verbatim after the build (carry.py); only the names are
+        # collected here.
         if found.get("StaticMesh") and project.config.get("carry_meshes", True):
             mesh_entries = found["StaticMesh"]
         if found.get("Sound"):
@@ -418,49 +456,17 @@ def build(project, manifest, out_root=None, log=print):
                                              with_detail=(mode != "none"),
                                              detail_exclude=set(
                                                  project.config.get("detail_exclude", [])))
-    # Now the meshes. An ASE binds *MAP_DIFFUSE/*BITMAP against an already
-    # loaded material BY OBJECT NAME (Editor/Src/UnStaticMesh.cpp:680), so each
-    # slot has to name what this package actually contains: a Shader wrapper
-    # (bas08go -> bas08go_SH), a rebuilt composite
-    # (cp_Mechdecofloor2_shad -> cp_Mechdecofloor2_shad_SH), a flat colour
-    # turned texture, or the plain texture under its own name. A slot left
-    # pointing at a name the package does not have imports with NO material and
-    # the mesh renders in the default texture -- DM-1on1-Backspace's lift and
-    # its tower grates did exactly that.
-    slot_names = {}
-    # A plain texture keeps its own name, so it maps to itself; anything this
-    # package renamed maps to the new name. A slot missing from this map has no
-    # object in the package at all and needs a Skins() override instead.
-    for r in manifest["textures"]:
-        slot_names[r["name"]] = r["name"]
-    for leaf, shader in wrappers.items():
-        slot_names[leaf] = shader
-    for orig, rec in rebuilt.items():
-        slot_names[orig] = rec["name"].rsplit(".", 1)[-1]
-    # A slot whose material now lives in a shared content package binds by the
-    # name it has THERE -- and that package has to be loaded while this one
-    # compiles, or the ASE importer has nothing to match against.
-    shared_refs = project.load("content_refs.json") or {}
-    shared_loads = set()
-    if shared_refs and mesh_entries:
-        wanted = {leaf for _g, name in mesh_entries
-                  for leaf in ((project.load("survey.json") or {})
-                               .get("meshes", {}).get(name, {}) or {}).values()}
-        for leaf in sorted(wanted):
-            ref = shared_refs.get(leaf)
-            if not ref:
-                continue
-            slot_names[leaf] = ref[0].rsplit(".", 1)[-1]
-            shared_loads.add(ref[0].split(".")[0])
+    # The meshes do not go through the .uc at all. They are copied out of the
+    # source map export by export, AFTER this package compiles, by
+    # `uttexture.py meshes` -- see carry.py. An ASE round trip re-tessellates a
+    # collision hull, which silently turns an open hull inside out and puts
+    # invisible walls in the map, so the only faithful carry is the bytes.
     if mesh_entries:
-        meshes = mesh.build(project, pkg_dir, mesh_entries, slot_names, log=log)
-        for group, name, _tris in meshes:
-            carried_refs.append("%s.%s" % (group, name) if group else name)
-        made = {name for _g, name, _t in meshes}
+        project.store("meshes.json", [[g, n] for g, n in mesh_entries])
         for group, name in mesh_entries:
-            if name not in made:
-                uncarried.append("StaticMesh'%s'"
-                                 % ("%s.%s" % (group, name) if group else name))
+            carried_refs.append("%s.%s" % (group, name) if group else name)
+    else:
+        project.store("meshes.json", [])
     project.store("carried.json", sorted(set(carried_refs)))
 
     # A detail texture can also be drawn on a surface in its own right, in which
@@ -493,14 +499,21 @@ def build(project, manifest, out_root=None, log=print):
         tga = os.path.join(tex_dir, leaf + ".tga")
         to_tga(png, tga, width, height)
         total += os.path.getsize(tga)
-        # Uncompressed: these are a few tens of KB, and re-compressing grain
-        # that was already DXT once would add a second generation of loss to
-        # the one thing whose whole job is high-frequency.
+        # Uncompressed, because re-compressing grain that was already DXT once
+        # adds a second generation of loss to the one thing whose whole job is
+        # high-frequency. At the source size that costs a few hundred KB; an
+        # UPSCALED detail texture is 16x that at factor 4, which is worth saying
+        # out loud -- DM-1on1-Roughinery's detail11 alone is 21 MB of a 41 MB
+        # package.
         imports.append("#exec TEXTURE IMPORT NAME=%s GROUP=%s FILE=Textures\\%s.tga"
                        " ALPHA=%d LODSET=0"
                        % (leaf, detail_mod.GROUP, leaf, 1 if alpha else 0))
         carried_details.append(leaf)
-        carried_shown.append("%s (%dx%d)" % (leaf, width, height))
+        cost = width * height * 4 * 4 // 3
+        note = ""
+        if cost > 4 << 20:
+            note = ", %.0f MB uncompressed in the package" % (cost / 1e6)
+        carried_shown.append("%s (%dx%d%s)" % (leaf, width, height, note))
     project.store("wrappers.json", wrappers)
     sky_path = sky_materials(ms, package, project.config.get("sky"))
     decl, sky = (ms.declaration(), ms.emit()) if len(ms) else (None, [])
@@ -519,22 +532,6 @@ def build(project, manifest, out_root=None, log=print):
                  "// alpha maps, both MIPS=off. These are data, not pictures."]
         body += terrain_lines
     body += imports
-    if shared_loads:
-        body += ["",
-                 "// Shared 4K content the meshes below bind against: an ASE",
-                 "// matches *BITMAP by object name among LOADED materials, so",
-                 "// these have to be loaded while this package compiles."]
-        body += ["#exec OBJ LOAD FILE=..\\Textures\\%s.utx PACKAGE=%s" % (p, p)
-                 for p in sorted(shared_loads)]
-    if meshes:
-        body += ["", "// Static meshes the source map embedded in its own .ut2.",
-                 "// Not STATICMESH IMPORT -- that exec takes LightWave .lwo only;",
-                 "// ASE is UStaticMeshFactory, through the generic factory exec."]
-        # PACKAGE=<Pkg>.<Group> reproduces the source map's group: the exec's
-        # CreatePackage -> ResolveName(..., Create=1) splits the name on dots.
-        body += [mesh.MESH_EXEC % (("%s.%s" % (g, n) if g else n) + ".ase", n,
-                                   ("%s.%s" % (package, g)) if g else package)
-                 for g, n, _tris in meshes]
     if sounds:
         body += ["", "// Sounds the source map embedded in its own .ut2."]
         body += [mesh.AUDIO_EXEC % (n + ".wav", n) + (" GROUP=%s" % g if g else "")
@@ -544,6 +541,7 @@ def build(project, manifest, out_root=None, log=print):
     body += ["}", ""]
     uc = os.path.join(cls_dir, package + ".uc")
     open(uc, "wb").write("\r\n".join(body).encode("latin-1", "replace"))
+    make_ini = write_make_ini(project.install, pkg_dir, package)
 
     log("%d textures, %.1f MB of TGA -> %s%s" % (
         len(manifest["textures"]), total / 1e6, tex_dir,
@@ -560,27 +558,37 @@ def build(project, manifest, out_root=None, log=print):
         log("detail textures copied in: %s" % ", ".join(carried_shown))
     if carried:
         log("carried from %s: %s" % (project.map, ", ".join(carried)))
-    if uncarried:
-        log("%d map-embedded meshes NOT carried (export failed); their references"
-            % len(uncarried))
-        log("  stay on %s, so the rebuild is NOT self-contained:" % project.map)
-        for ref in uncarried[:6]:
-            log("    %s" % ref)
-        if len(uncarried) > 6:
-            log("    ... and %d more" % (len(uncarried) - 6))
+    if mesh_entries:
+        log("%d map-embedded mesh(es) to carry verbatim after the build:"
+            % len(mesh_entries))
+        log("  %s" % ", ".join(("%s.%s" % (g, n) if g else n)
+                               for g, n in mesh_entries[:8]))
+        if len(mesh_entries) > 8:
+            log("  ... and %d more" % (len(mesh_entries) - 8))
     if unbuildable:
         log("NOT carried -- composites the package cannot rebuild, still point at %s:"
             % project.map)
         for ref in unbuildable:
             log("  %s" % ref)
     log("")
-    log("INI:     System/UT2004.ini EditPackages must list %s" % package)
-    log("         and NOT the packages already finished -- UCC loads every one")
-    log("         it is given, even the ones it skips compiling.")
-    log("BUILD:   cd %s/System && rm -f %s.u && ./UCC.exe make" % (root, package))
+    log("BUILD:   cd %s/System" % root)
+    log("         rm -f %s.u %s.ucl" % (package, package))
+    log("         ./UCC.exe make -ini=%s" % windows_ini_path(make_ini))
+    log("         (its own ini, so System/UT2004.ini never lists this package;")
+    log("          a listed package gets preloaded by name and the .t3d import")
+    log("          then silently loses every material)")
     # mv, not cp: Paths= searches ../System/*.u BEFORE ../Textures/*.utx
     # (UT2004.ini [Core.System]), so leaving the .u behind shadows the .utx --
     # you end up testing one file and shipping the other.
+    if mesh_entries:
+        # Between the compile and the mv, because the carry rewrites the very
+        # file ucc produced. Skipping it leaves the map's mesh references
+        # pointing at the source package, which is a broken download online.
+        log("MESHES:  uttexture.py meshes %s" % project.map)
+        log("         (%d mesh(es) copied verbatim into %s.u -- an ASE round"
+            % (len(mesh_entries), package))
+        log("          trip re-tessellates collision hulls and turns open ones")
+        log("          inside out, which is invisible walls in the map)")
     log("         mv %s.u ../Textures/%s.utx" % (package, package))
     # UEditorEngine::Init (Editor/Src/UnEditor.cpp:106) LoadPackage()s every
     # EditPackages entry BY NAME at startup, and ../Textures/*.utx is on the
@@ -590,9 +598,9 @@ def build(project, manifest, out_root=None, log=print):
     # attached to that pre-loaded copy and never appear under MyLevel -- every
     # surface then imports with a NULL material while the textures, which have
     # ordinary group outers, come in fine.
-    log("THEN:    REMOVE EditPackages=%s from System/UT2004.ini" % package)
-    log("         BEFORE starting the editor, or the import silently loses")
-    log("         every material (NULL brush references, wrong textures).")
+    log("CHECK:   System/UT2004.ini must NOT list EditPackages=%s" % package)
+    log("         before the editor starts, or the import silently loses every")
+    log("         material (NULL brush references, wrong textures).")
     log("IMPORT:  File > New, then in the editor console:")
     log("           OBJ LOAD FILE=..\\Textures\\%s.utx PACKAGE=MyLevel" % package)
     log("         (embed only, and BEFORE the import -- check the Texture")

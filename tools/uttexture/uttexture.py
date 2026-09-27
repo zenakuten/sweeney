@@ -103,6 +103,40 @@ def cmd_package(project, args):
     pkg_mod.build(project, m, out_root=args.out)
 
 
+def cmd_meshes(project, args):
+    """Copy the source map's static meshes into the package ucc just built.
+
+    Between `ucc make` and the mv to Textures/, on the .u -- a mesh is copied
+    export by export rather than compiled in, because an ASE round trip
+    re-tessellates a collision hull and an open hull re-tessellated is an
+    invisible wall. The package is therefore NOT reproducible from its .uc
+    alone, and this is part of the build, not an extra.
+    """
+    from uttexture import carry
+    package = project.config["package"]
+    if args.into_map:
+        # The shipped map, not the package: a 4K rebuild embeds its meshes, so
+        # this is the only thing that fixes one that has already gone out.
+        built = os.path.join(project.install, "Maps", project.out_map + ".ut2")
+        if not os.path.exists(built):
+            raise SystemExit("%s does not exist" % built)
+    else:
+        built = args.package or _built_package(project, package)
+    print("carrying meshes into %s" % built)
+    carry.carry_map_meshes(project, built, new_guid=bool(args.into_map))
+
+
+def _built_package(project, package):
+    """The .u ucc just made, or the .utx it was already moved to."""
+    u = os.path.join(project.install, "System", package + ".u")
+    utx = os.path.join(project.install, "Textures", package + ".utx")
+    if os.path.exists(u):
+        return u
+    if os.path.exists(utx):
+        return utx
+    raise SystemExit("neither %s nor %s exists -- run `ucc make` first" % (u, utx))
+
+
 def cmd_t3d(project, args, embed=None):
     m = need(project, "manifest.json", "extract")
     from uttexture.project import engine_patch_warning
@@ -212,7 +246,8 @@ def main():
     c.add_argument("maps", nargs="+")
     c.add_argument("--no-build", action="store_true")
     c.add_argument("--rebuild-all", action="store_true")
-    for name in ("survey", "extract", "upscale", "package", "t3d", "all", "compare"):
+    for name in ("survey", "extract", "upscale", "package", "meshes", "t3d",
+                 "all", "compare"):
         p = sub.add_parser(name)
         p.add_argument("map")
         if name in ("survey", "all"):
@@ -225,10 +260,19 @@ def main():
         if name in ("t3d", "all"):
             p.add_argument("--embed", action="store_true",
                            help="reference MyLevel, for embedding into the .ut2")
+        if name == "meshes":
+            p.add_argument("--package", help="the built .u/.utx to carry into")
+            # NOT --map: every subcommand already takes the map name as a
+            # positional called "map", and argparse would quietly hand this the
+            # same attribute.
+            p.add_argument("--into-map", action="store_true",
+                           help="patch the built Maps/<out>.ut2 instead, and give"
+                                " it a new GUID")
         if name == "compare":
             p.add_argument("texture")
     args = ap.parse_args()
-    for opt in ("keep_unused", "model", "models_dir", "only", "out", "embed"):
+    for opt in ("keep_unused", "model", "models_dir", "only", "out", "embed",
+                "package", "into_map"):
         if not hasattr(args, opt):
             setattr(args, opt, None)
     if args.cmd == "content":

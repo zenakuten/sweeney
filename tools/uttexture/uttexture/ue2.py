@@ -381,8 +381,14 @@ def primitive_bounds(pkg, export):
     return lo, hi
 
 
-def static_mesh_collision(pkg, export):
-    """Export index of a StaticMesh's CollisionModel, or None."""
+def _walk_to_collision_ref(pkg, export):
+    """Reader positioned at a StaticMesh's CollisionModel reference, or None.
+
+    Split out so a caller that needs to REWRITE the reference -- carrying a
+    mesh verbatim into another package, where the export numbering differs --
+    gets the byte position from the same walk that reads it, rather than a
+    second copy of it that can drift.
+    """
     r = Reader(pkg.data, export["offset"])
     if export["flags"] & 0x02000000:          # RF_HasStack
         r.index(); r.index(); r.skip(12)
@@ -400,9 +406,17 @@ def static_mesh_collision(pkg, export):
             _skip_array(r, 8); r.skip(8)
         _skip_array(r, 2);  r.skip(4)         # IndexBuffer
         _skip_array(r, 2);  r.skip(4)         # WireframeIndexBuffer
-        ref = r.index()
     except Exception:
         return None
+    return r
+
+
+def static_mesh_collision(pkg, export):
+    """Export index of a StaticMesh's CollisionModel, or None."""
+    r = _walk_to_collision_ref(pkg, export)
+    if r is None:
+        return None
+    ref = r.index()
     if not (ref > 0 and ref - 1 < len(pkg.exports)
             and pkg.class_of(pkg.exports[ref - 1]) == "Model"):
         return None
@@ -472,8 +486,8 @@ def read_polys(pkg, index, normals=False):
     return out
 
 
-def model_polys_index(pkg, export):
-    """Export index of a UModel's Polys, or None.
+def _walk_to_polys_ref(pkg, export):
+    """Reader positioned at a UModel's Polys reference, or None.
 
     UModel::Serialize (Engine/Src/UnModel.cpp:162) writes Vectors, Points,
     Nodes, Surfs, Verts, NumSharedSides, NumZones, the Zones, and only then the
@@ -515,7 +529,15 @@ def model_polys_index(pkg, export):
     r.i32()                                    # NumSharedSides
     for _ in range(r.i32()):                   # Zones
         r.index(); r.p += 8 + 8 + 4
-    ref = r.index()                            # Polys
+    return r
+
+
+def model_polys_index(pkg, export):
+    """Export index of a UModel's Polys, or None."""
+    r = _walk_to_polys_ref(pkg, export)
+    if r is None:
+        return None
+    ref = r.index()
     if 0 < ref <= len(pkg.exports) and pkg.class_of(pkg.exports[ref - 1]) == "Polys":
         return ref - 1
     return None
@@ -555,3 +577,10 @@ def collision_polys(pkg, mesh_export, normals=False):
     except Exception:
         return None
     return polys or None
+
+
+def ref_at(reader):
+    """(value, start, length) of the compact index the reader is sitting on."""
+    start = reader.p
+    value = reader.index()
+    return value, start, reader.p - start

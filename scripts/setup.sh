@@ -165,6 +165,16 @@ if [ -n "$INSTALL_ROOT" ]; then
 fi
 [ -n "$UT3CONV" ] && ok "ut3converter at $UT3CONV" || warn "ut3converter not found (optional)"
 
+# UnrealEd's command bridge is a Windows helper. On Linux it runs under the same
+# Wine prefix as UnrealEd; on Windows it runs directly.
+UNREALED_SEND=""
+if [ -n "$INSTALL_ROOT" ]; then
+  [ -f "$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-send.exe" ] \
+    && UNREALED_SEND="$INSTALL_ROOT/UT2004MCP/Editor/bridge/unrealed-send.exe"
+fi
+[ -n "$UNREALED_SEND" ] && ok "UnrealEd command bridge at $UNREALED_SEND" \
+                         || warn "UnrealEd command bridge not found (optional)"
+
 # The texture-rebuild toolchain ships with Sweeney rather than being found.
 UTTEXTURE=""
 [ -f "$PLUGIN_ROOT/tools/uttexture/uttexture.py" ] && UTTEXTURE="$PLUGIN_ROOT/tools/uttexture"
@@ -203,7 +213,7 @@ say
 mkdir -p "$SWEENEY_HOME"
 ENGINE_DIR="$ENGINE_DIR" INSTALL_ROOT="$INSTALL_ROOT" UCC_BITS="$UCC_BITS" \
 UCC_ID="$UCC_ID" UCC_KIND="$UCC_KIND" BUILD_VERSION="$BUILD_VERSION" BUILD_DATE="$BUILD_DATE" BUILD_COMMIT="$BUILD_COMMIT" CLIENT_ROOT="$CLIENT_ROOT" \
-UT3CONV="$UT3CONV" UTTEXTURE="$UTTEXTURE" UMODEL="$UMODEL" TEXWORK="$TEXWORK" PLUGIN_ROOT="$PLUGIN_ROOT" \
+UT3CONV="$UT3CONV" UNREALED_SEND="$UNREALED_SEND" UTTEXTURE="$UTTEXTURE" UMODEL="$UMODEL" TEXWORK="$TEXWORK" PLUGIN_ROOT="$PLUGIN_ROOT" \
 CONFIG="$CONFIG" "$PY" - <<'PY'
 import json, os, datetime
 
@@ -228,6 +238,7 @@ cfg = {
     "plugin_root": val("PLUGIN_ROOT"),
     "tools": {
         "ut3converter": val("UT3CONV"),
+        "unrealed_send": val("UNREALED_SEND"),
         "uttexture": val("UTTEXTURE"),
         "umodel": val("UMODEL"),
     },

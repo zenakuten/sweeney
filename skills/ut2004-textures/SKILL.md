@@ -49,19 +49,30 @@ the factor a texture actually grew — so at 1× there is nothing to rescale.
 ./uttexture.py survey   DM-Deck      # what it uses, and how each texture is reached
 ./uttexture.py extract  DM-Deck      # pull them out, read their properties
 ./uttexture.py upscale  DM-Deck      # run the image model
-./uttexture.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc
+./uttexture.py package  DM-Deck      # write <Map>Tex: TGAs + generated .uc + make.ini
 ./uttexture.py t3d      DM-Deck      # export the map and rewrite it
 ./uttexture.py all      DM-Deck
 ```
 
-Then name `<Map>Tex` in `EditPackages` and:
+Then build it, carry the meshes in, and move it:
 
 ```bash
 cd System
 del DMDeckTex.u DMDeckTex.ucl
-ucc make
+ucc make -ini=..\DMDeckTex\make.ini
+py ..\..\uttexture.py meshes DM-Deck
 move DMDeckTex.u ..\Textures\DMDeckTex.utx
 ```
+
+`package` writes that `make.ini` listing only this package, so `System/UT2004.ini` never
+has to name it — an `EditPackages` entry is loaded *by name* at editor startup, and with
+`../Textures/*.utx` on the Paths that loads the finished package before the `.t3d` import,
+after which every surface imports with a NULL material.
+
+**`meshes` is part of the build, not an extra.** The map's own static meshes are copied
+into the package export-for-export rather than compiled in, because an interchange format
+re-tessellates collision hulls — see the maps skill. The package is therefore *not*
+reproducible from its `.uc` alone.
 
 **`mv`, not `cp`** — `System/*.u` is searched before `Textures/*.utx`, so a leftover `.u`
 silently shadows the shipped `.utx`. Copying instead has produced gigabytes of duplicates

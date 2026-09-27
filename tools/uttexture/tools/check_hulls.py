@@ -9,12 +9,20 @@ inside-out, be another mesh's hull, or be there at all when the source mesh
 asked for per-polygon collision, and the map still builds clean, renders
 correctly, and shows nothing unusual in the Karma collision view.
 
-  INVERTED  the hull's polygons enclose a NEGATIVE volume, so the engine treats
-            the outside as solid -- an invisible wall around the mesh.
-  MOVED     the hull's extent does not match the source mesh's hull.
-  EXTRA     the source set UseSimpleBoxCollision=False (per-polygon collision)
-            but the rebuilt mesh has a hull, which seals every gap.
+The meshes are copied out of the source map verbatim (uttexture/carry.py), so
+the answer here is not "close enough" but IDENTICAL -- same polygons, same
+vertices, same stored normals. Anything else means the copy did not happen and
+something re-tessellated the hull, which is how DM-1on1-Roughinery's traeger_512
+became four invisible walls.
+
   MISSING   the source has a hull and the rebuild does not.
+  EXTRA     the rebuild has a hull and the source does not.
+  CHANGED   the hull differs from the source's -- polygon count, vertices or
+            normals. An open hull re-tessellated this way changes which side
+            the engine calls solid: an invisible wall, or a mesh you fall
+            through.
+  COLLISION UseSimpleBoxCollision/UseSimpleLineCollision do not match the
+            source, so the hull is consulted for different traces than it was.
 """
 
 import glob
@@ -27,7 +35,7 @@ sys.path.insert(0, CODE)
 from uttexture.sweeney import install_root, work_root   # noqa: E402
 ROOT = work_root()
 
-from uttexture import ue2, mesh                                       # noqa: E402
+from uttexture import ue2                                             # noqa: E402
 
 INSTALL = install_root()
 
@@ -57,14 +65,29 @@ def covers(outer, inner):
 
 
 def check(map_name):
+    """Check <Map>Tex and, when it exists, the shipped map as well.
+
+    The map is the one that matters. A 4K rebuild is imported with
+    PACKAGE=MyLevel, so the .ut2 holds the meshes as its OWN exports and a fixed
+    <Map>Tex does nothing for it until the map is rebuilt or patched.
+    """
     work = os.path.join(ROOT, "maps", map_name)
     config = json.load(open(os.path.join(work, "config.json")))
     package = config["package"]
+    out_map = config.get("map_name") or (map_name + "4K")
     built = os.path.join(INSTALL, "Textures", package + ".utx")
     source = os.path.join(INSTALL, "Maps", map_name + ".ut2")
+    shipped = os.path.join(INSTALL, "Maps", out_map + ".ut2")
     if not os.path.exists(built):
         print("  %-22s %s not built" % (map_name, package))
         return 1
+    bad = check_one(map_name, work, package, source, built)
+    if os.path.exists(shipped) and os.path.abspath(shipped) != os.path.abspath(source):
+        bad += check_one(map_name, work, out_map, source, shipped)
+    return bad
+
+
+def check_one(map_name, work, package, source, built):
     carried = {n.split(".")[-1] for n in
                json.load(open(os.path.join(work, "meta", "carried.json")))}
     src, out = ue2.Package(source), ue2.Package(built)
@@ -73,41 +96,30 @@ def check(map_name):
     for name, _path, export in src.exports_of_class("StaticMesh"):
         if name not in carried or name not in have:
             continue
-        props = src.properties(export)
-        simple = props.get("UseSimpleBoxCollision")
-        wants = simple is None or bool(simple[0].raw[0])
+        for flag in ("UseSimpleBoxCollision", "UseSimpleLineCollision"):
+            want = src.properties(export).get(flag)
+            got = out.properties(have[name]).get(flag)
+            if bool(want) != bool(got) or (want and want[0].raw != got[0].raw):
+                problems.append("COLLISION %s (%s differs from the source)"
+                                % (name, flag))
         a = ue2.collision_polys(src, export, normals=True)
         b = ue2.collision_polys(out, have[name], normals=True)
-        if not wants:
-            if b:
-                problems.append("EXTRA    %s (source asks for per-polygon collision)" % name)
-            continue
-        if a and mesh.hull_cannot_close(a):
-            # mesh.drop_open_hull discards a hull that encloses no volume, so
-            # the rebuild is SUPPOSED to have none and fall back to per-polygon
-            # collision. Anything else means the drop did not happen.
-            if b:
-                problems.append("OPENKEPT %s (source hull encloses no volume but the rebuild kept one)"
-                                % name)
-            else:
-                notes.append("dropped  %s (source hull has %d poly(s), encloses no volume; "
-                             "rebuild uses per-polygon collision)" % (name, len(a)))
-            continue
         if a and not b:
             problems.append("MISSING  %s (source hull has %d polys)" % (name, len(a)))
-            continue
-        if not b:
-            continue
-        if volume(b) <= 0:
-            problems.append("INVERTED %s (signed volume %+.0f)" % (name, volume(b)))
-        elif mesh.hull_cannot_close(b):
-            problems.append("OPEN     %s (rebuild hull is not a closed volume)" % name)
-        elif a and extent(a) != extent(b):
-            problems.append("MOVED    %s %s -> %s" % (name, extent(a), extent(b)))
+        elif b and not a:
+            problems.append("EXTRA    %s (rebuild has a hull, source has none)" % name)
+        elif a and a != b:
+            problems.append("CHANGED  %s (%d polys -> %d, %s)"
+                            % (name, len(a), len(b),
+                               "re-tessellated" if len(a) != len(b)
+                               else "same count, different geometry"))
+        elif a:
+            notes.append("hull ok  %s (%d polys, identical)" % (name, len(a)))
     print("  %-22s %-22s %d carried mesh(es), %d problem(s)"
           % (map_name, package, len(carried), len(problems)))
-    for line in notes:
-        print("      %s" % line)
+    if notes and os.environ.get("CHECK_HULLS_VERBOSE"):
+        for line in notes:
+            print("      %s" % line)
     for line in problems:
         print("      %s" % line)
     return len(problems)

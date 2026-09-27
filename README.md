@@ -77,6 +77,7 @@ folklore. It restores the install afterwards.
 | `ut2004-gui` | menus, HUD, Canvas, scoreboards |
 | `ut2004-packages` | `.u`/`.utx`, textures, meshes, sounds, the UE2 package format |
 | `ut2004-maps` | `.t3d`, UnrealEd, BSP, terrain, collision |
+| `ut2004-editor-automation` | driving a running UnrealEd through its command bridge |
 | `ut2004-live-testing` | driving a running server, logs, screenshots |
 | `ut3-map-conversion` | converting UT3 maps |
 | `ut2004-textures` | remaking a map's textures with an image model |
@@ -305,7 +306,7 @@ textures and 49 meshes — that was **10m21s** on one GPU, most of it in the mod
   [ 1/57] anubis-water   512x512 restyled via 4x +alpha
   [ 3/57] bas01HA       1024x1024 restyled via 4x
   ...
-  23 of the map's meshes carry a collision hull
+  49 map-embedded mesh(es) to carry verbatim after the build
   57 textures, 147.0 MB of TGA -> <install>/DMRankinAnimeTex/Textures
   36 Shader wrappers carry Detail/SurfaceType
 ```
@@ -313,16 +314,24 @@ textures and 49 meshes — that was **10m21s** on one GPU, most of it in the mod
 **3. Build the package.** Exactly as the tool prints it:
 
 ```bash
-# EditPackages must list DMRankinAnimeTex and nothing else already built
-cd "$UT2004/System" && rm -f DMRankinAnimeTex.u && ./UCC.exe make
+cd "$UT2004/System" && rm -f DMRankinAnimeTex.u DMRankinAnimeTex.ucl
+./UCC.exe make -ini="$UT2004/DMRankinAnimeTex/make.ini"   # Z:\... path under Wine
+python3 uttexture.py meshes DM-Rankin      # copies the map's meshes into the .u
 mv DMRankinAnimeTex.u ../Textures/DMRankinAnimeTex.utx
 ```
 
+`package` writes that `make.ini` listing only this package, so `System/UT2004.ini` never
+names it. The `meshes` step is **part of the build**: the map's own static meshes are
+copied into the package export-for-export rather than compiled in, because an ASE carries
+triangles and so re-tessellates a collision hull — which, for a hull whose edges are not
+each shared by two faces, changes which side the engine calls solid. Skip it and the
+package has textures but no meshes.
+
 Rankin came out at **32.2 MB**, against roughly 500 MB for the same map at 4×.
 
-**4. Import the map.** Take the `EditPackages` line back out *before* starting the editor
-— left in, UnrealEd preloads the package under its own name and every material imports as
-NULL.
+**4. Import the map.** Check `System/UT2004.ini` does not list `EditPackages=`
+`DMRankinAnimeTex` *before* starting the editor — listed, UnrealEd preloads the package
+under its own name and every material imports as NULL.
 
 Start UnrealEd and **File > New**, then open the console: **View > Log**. The log window
 has a command box along the bottom — that box *is* the editor console. Load the package's
