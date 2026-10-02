@@ -28,7 +28,10 @@ A handful of others, all silent:
 
 - A comment containing a backslash **and** an unbalanced quote hangs the compiler on
   `Analyzing...` — forever, with no message.
-- `.uc` files are Latin-1. UCC is not Unicode-aware.
+- `.uc` files are Latin-1. UTF-8 in a string compiles to garbled text (`café` becomes
+  `cafÃ©`).
+- In `defaultproperties`, `N='Foo'` stores a lone apostrophe as the name, `N=Foo Bar`
+  stores `Foo`, and `V=vect(1,2,3)` stores nothing. All compile without a word.
 - `#exec TEXTURE IMPORT` flips every TGA vertically, unconditionally, ignoring the
   descriptor byte. Seamless textures still tile, so only directional ones look wrong.
 - `ALPHA=1` on import does not mean "has an alpha channel" — it sets a *rendering* flag.

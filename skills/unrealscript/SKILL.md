@@ -50,18 +50,31 @@ Catches the traps below. Errors are real; warnings appear throughout code that
 compiles. It resolves property types through the class hierarchy using the engine
 source, so run setup first for the enum check to work properly.
 
-Calibrated to report zero errors across the 2432-file engine source and 472 mod files
-that build under a 64-bit 3374 UCC.
+Calibrated to report zero errors across the 2432-file engine source. On mod code it
+also finds real bugs that compile: run over the 1062 mod classes of one install, the
+`defaultproperties` checks found 17, every one a value UCC stores wrongly without a
+word (seven vehicle weapons with `YawBone='Bone_weapon'`, so the bone is an apostrophe).
 
 ## The traps
 
-### `.uc` files are Latin-1, never UTF-8, never a BOM
+### `.uc` files are Latin-1, never UTF-8
 
-UCC is not Unicode-aware. A BOM or multi-byte UTF-8 can hang it on `Analyzing...`.
-ASCII is safe, being a subset of Latin-1. Introduce high bytes only as Latin-1.
+UCC reads a `.uc` as Latin-1 bytes. ASCII is safe, being a subset. Introduce high
+bytes only as Latin-1.
 
-In practice a good deal of shipped code does contain stray UTF-8 in comments and
-compiles anyway — so this is a hazard, not a certainty. Do not introduce more.
+What UTF-8 actually does, measured on the retail 32-bit UCC and a 64-bit 3374 build.
+**None of it hangs**, despite the long-standing belief that it does:
+
+| | UCC |
+|---|---|
+| UTF-8 in a comment | fine |
+| UTF-8 in a string | **silent mojibake**: `"café"` is stored as `cafÃ©`, each byte its own character |
+| UTF-8 BOM | retail: `Error, Unexpected 'ï'` on line 1. 3374: accepted |
+| UTF-8 in an identifier | `Missing ';' before 'Ã'` |
+| UTF-16 with a BOM | fine, read as Unicode: `"café"` is stored correctly |
+
+So the real hazard is text: player-visible strings typed in a UTF-8 editor come out
+garbled, with no error. Save as Latin-1 (or UTF-16) when a file needs accents.
 
 ### A comment must not leave a quote open
 
@@ -116,6 +129,34 @@ harmless when the *parent's* default is also index 0.
 
 This bites hardest on decompiled code — UE Explorer emits every enum default as a raw
 int, so a decompiled package can carry dozens at once.
+
+### `defaultproperties` values: quotes, spaces and literals
+
+`defaultproperties` is not script. It is parsed by a separate text importer with its
+own rules, and several natural-looking values compile cleanly and store something else.
+All measured (`tests/uparse/probes/dp-*`):
+
+```unrealscript
+N=Foo                     // name: correct
+N="Foo Bar"               // name: correct; double quotes allow spaces
+N='Foo'                   // SILENT: stores the name ' (a lone apostrophe)
+N=name'Foo'               // SILENT: stores the name Name
+N=Foo Bar                 // SILENT: stores Foo, cut at the space
+S='Foo'                   // string: Error, Missing '"' in string default properties
+
+V=(X=1,Y=2,Z=3)           // correct
+V=(X=1, Y=2, Z=3)         // Error, Unknown member  Z in V -- and no line number
+V=vect(1,2,3)             // SILENT: stores nothing; same for col() and rot()
+C=(G=128)                 // stores R, B, A as 0 -- not the parent's values
+```
+
+In `'Foo'` script syntax is a name; in `defaultproperties` it is not. Inside a struct,
+`(N='Foo')` fails loudly (`Bad termination`) rather than silently. Whitespace in a struct
+value is fatal only before a member name or between the name and its `=`; before `,` or
+`)`, and after `=`, it is accepted.
+
+`uccheck.py` flags all of these. Errors raised while importing defaults carry no line
+number, so a failing build with `line 0` points here.
 
 ## Diagnosing a hang
 

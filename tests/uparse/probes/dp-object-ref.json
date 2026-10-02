@@ -1,0 +1,13 @@
+{
+ "outcome": "ok",
+ "errors": [],
+ "ucc_id": "207224 bytes, mtime 2026-07-18 20:40:48",
+ "defaults": {
+  "tex": {
+   "0": [
+    "obj",
+    "Engine.DefaultTexture"
+   ]
+  }
+ }
+}

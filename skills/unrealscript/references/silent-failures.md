@@ -77,11 +77,23 @@ halving a row height doubles the per-row loss.
 
 Declare the accumulator `float`, or compute the value fresh each iteration.
 
+## "My default value didn't stick"
+
+`defaultproperties` has its own syntax, and the wrong form often compiles and stores
+something else: `N='Foo'` stores a lone apostrophe, `N=Foo Bar` stores `Foo`, and
+`V=vect(1,2,3)` stores nothing. Names go bare or in double quotes, structs as
+`(X=1,Y=2,Z=3)` with no spaces around member names. The SKILL has the full table, and
+`uccheck.py` catches them. An enum given an integer (`RemoteRole=2`) is discarded too.
+
+To see what UCC actually stored, read it back from the compiled package:
+`tools/uparse_oracle/reflect.py MyMod.u --class MyClass`.
+
 ## "The compiler just sits there"
 
-See the SKILL for the two triggers: a comment that leaves a quote open, and
-multi-byte UTF-8. (The ternary operator is often blamed, but it is an ordinary compile
-error with a misleading message, not a hang.) Diagnose with:
+See the SKILL for the measured trigger: a comment that leaves a quote open after a
+backslash. The ternary operator and UTF-8 are often blamed, but both were measured: the
+ternary is an ordinary compile error with a misleading message, and UTF-8 never hung
+either compiler tested (in a string it is silent mojibake instead). Diagnose with:
 
 ```
 cd System && ucc make          # timeout 60 wine UCC.exe make, on Linux

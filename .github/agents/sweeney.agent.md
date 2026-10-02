@@ -69,9 +69,9 @@ back out beats a redesign, especially when testing means restarting a server.
 
 ## Rules
 
-**`.uc` files are Latin-1 (ISO-8859-1), never UTF-8, never with a BOM.** UCC is not
-Unicode-aware. Plain ASCII is safe, since it is a subset. Getting this wrong hangs the
-compiler rather than producing an error.
+**`.uc` files are Latin-1 (ISO-8859-1), never UTF-8.** UCC reads them as Latin-1 bytes.
+Plain ASCII is safe, since it is a subset. UTF-8 in a string compiles to garbled text
+with no error, and a UTF-8 BOM is a compile error on the retail compiler.
 
 **Build it yourself.** Delete the package's `.u` and `.ucl`, then run `ucc make` from the
 install's `System/`. A build is slow — it is not dangerous. Read what comes back and act
