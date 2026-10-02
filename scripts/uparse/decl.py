@@ -898,6 +898,8 @@ class DeclParser:
         locals_: list[dict] = []
         defined = False
         body_span = None
+        # The override checks run once '{' is read, or after the last token before ';'.
+        check_line = c.peek().line if c.at("{") else c.t[c.i - 1].line
         if c.at("{"):
             if "native" in flags:
                 raise c.error("Native functions may only be declared, not defined")
@@ -933,6 +935,7 @@ class DeclParser:
         fn["_kind_word"] = kind_word
         fn["_ret"] = ret
         fn["_friendly"] = name_tok.text      # what an operator is written as
+        fn["_check_line"] = check_line
         if body_span is not None:
             fn["_body"] = body_span
         _mark(fn, name_tok, name_pos)

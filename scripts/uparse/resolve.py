@@ -541,16 +541,88 @@ def _function_errors(f, state, own, view, package, ctx, out, check_prop) -> None
     pflags = set(pf.get("flags") or [])
     flags = set(f.get("flags") or [])
     word = f.get("_kind_word") or "function"
+    line = f.get("_check_line", line)
     if ("static" in pflags) != ("static" in flags):
         out.append((pos, line, f"Function '{f['name']}' specifiers differ from original"))
         return
-    differs = "final" in pflags
-    if len(_parms(pf)) != len(_parms(f)):
-        differs = True
-    if (_returns(pf) is None) != (_returns(f) is None):
-        differs = True
-    if differs:
-        out.append((pos, line, f"Redefinition of '{word} {f['name']}' differs from original in {pinfo.name}"))
+    differs_msg = f"Redefinition of '{word} {f['name']}' differs from original in {pinfo.name}"
+    if len(_parms(pf)) != len(_parms(f)) or (_returns(pf) is None) != (_returns(f) is None):
+        out.append((pos, line, differs_msg))
+        return
+    # Parameters in order, then the return value (an out parameter), each by
+    # MatchesType with identity.
+    mine = _parms(f) + ([_returns(f)] if _returns(f) else [])
+    theirs = _parms(pf) + ([_returns(pf)] if _returns(pf) else [])
+    def resolve(p: dict):
+        r = ctx.resolve_type(p["type"], own["name"], own)
+        if r is None and (p.get("type") or "").lower() == own["name"].lower():
+            r = ("class", f"{package}.{own['name']}")
+        if r is None:
+            return None
+        kind = {"class": "ObjectProperty", "enum": "ByteProperty", "struct": "StructProperty"}.get(r[0])
+        if kind is None:
+            return None
+        key = {"ByteProperty": "enum"}.get(kind, "type")
+        return {**p, "kind": kind, key: r[1]}
+
+    for a, b in zip(mine, theirs):
+        same = _identical(a, b, resolve)
+        if same is None:
+            break                         # a type we can't pin down: stop checking
+        if not same:
+            if "return" in (a.get("flags") or []):
+                out.append((pos, line, f"Redefinition of {word} {f['name']} differs only by return type"))
+            else:
+                out.append((pos, line, differs_msg))
+            return
+    if "final" in pflags:
+        out.append((pos, line, differs_msg))
+
+
+def _type_key(p: dict, resolve=None):
+    """What FPropertyBase keeps of a property for MatchesType; None if unknown.
+    `resolve` turns a source UnresolvedProperty into its resolved kind."""
+    if p.get("kind") == "UnresolvedProperty":
+        p = resolve(p) if resolve else None
+        if p is None:
+            return None
+    k = p.get("kind")
+    dim = p.get("array_dim", 1)
+    if not isinstance(dim, int):
+        return None                       # sized by a const: not worth resolving here
+    if k == "ArrayProperty":
+        inner = p.get("_inner_field") or p.get("inner_field") or p.get("_inner") or p.get("inner_type")
+        if not isinstance(inner, dict):
+            return None
+        key = _type_key({**inner, "array_dim": 1}, resolve)
+        return None if key is None else (key[0], 0) + key[2:]
+    last2 = lambda s: tuple((s or "").lower().split(".")[-2:])
+    last1 = lambda s: (s or "").lower().split(".")[-1]
+    if k == "ObjectProperty":
+        return ("object", dim, last1(p.get("type")), None)
+    if k == "ClassProperty":
+        return ("object", dim, "class", last1(p.get("meta_class")))
+    if k == "ByteProperty":
+        return ("byte", dim, last2(p.get("enum")) if p.get("enum") else None)
+    if k == "StructProperty":
+        return ("struct", dim, last2(p.get("type")))
+    if k in ("IntProperty", "BoolProperty", "FloatProperty", "NameProperty", "StrProperty",
+             "PointerProperty"):
+        return (k, dim)
+    if k == "DelegateProperty":
+        return ("delegate", dim)          # MatchesType's general case
+    return None
+
+
+def _identical(a: dict, b: dict, resolve=None):
+    """FPropertyBase(a).MatchesType(FPropertyBase(b), 1); None when unknown."""
+    af, bf = set(a.get("flags") or []), set(b.get("flags") or [])
+    if "out" in af and ("const" in bf or "out" not in bf):
+        return False
+    ka, kb = _type_key(a, resolve), _type_key(b, resolve)
+    if ka is None or kb is None:
+        return None
+    return ka == kb
 
 
 def _state_errors(st, own, view, package, ctx, out, check_prop) -> None:
