@@ -111,8 +111,11 @@ lands as `ScriptLog:` in the server's `System/server.log` and the client's
 
 Use the `unrealscript` skill and run `scripts/uccheck.py` over what you wrote. It
 catches the traps that cost the most time — encoding, the constructs that hang UCC
-during analysis, and defaults that are silently discarded. A clean compile does not
-mean the code does what you wrote.
+during analysis, and defaults that are silently discarded. Then run
+`scripts/upredict.py` on the mod. It predicts the build's result (`ok`, UCC's first
+error, `hang`, or `unknown`) in seconds, without a UCC round trip. On `ok` or
+`unknown`, build to confirm. A clean compile does not mean the code does what you
+wrote.
 
 ## Skills
 

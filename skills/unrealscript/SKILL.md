@@ -55,6 +55,38 @@ also finds real bugs that compile: run over the 1062 mod classes of one install,
 `defaultproperties` checks found 17, every one a value UCC stores wrongly without a
 word (seven vehicle weapons with `YawBone='Bone_weapon'`, so the bone is an apostrophe).
 
+Then predict the build itself:
+
+```bash
+python3 <sweeney>/scripts/upredict.py MyMod                     # a dir holding Classes/
+python3 <sweeney>/scripts/upredict.py MyMod --deps WSUTComp     # deps: compiled .u in System/
+python3 <sweeney>/scripts/upredict.py BaseMod MyMod             # several, built in order
+```
+
+This parses and type-checks the whole package the way UCC does: importer, lexer,
+declarations, function bodies, and `defaultproperties`. It loads the install's
+compiled packages as UCC would. It prints one of four answers:
+
+- `ok`: UCC will compile it.
+- `error`: UCC's first error, in its own `File.uc(N) : message` form.
+- `hang`: UCC will hang on `Analyzing...`, at the line shown.
+- `unknown`: nothing wrong was found, but some construct it doesn't model kept it
+  from promising `ok`. The classes involved are listed.
+
+It is checked against UCC itself. It has never predicted the wrong outcome on its
+test sets:
+- 619 probes;
+- 3493 classes built alone;
+- four real mods built whole.
+
+It needs the install configured by `setup.sh`. A run takes a few seconds per hundred
+classes, much faster than a wine build round trip. The exit status is 0 for `ok`, 1
+for `error` or `hang`, and 2 for `unknown`.
+
+`upredict` doesn't replace building. It answers whether the code compiles, not
+whether it does what you meant, and on `unknown` you still have to build. Use it
+after every edit, and build when it says `ok` or `unknown`.
+
 ## The traps
 
 ### `.uc` files are Latin-1, never UTF-8
@@ -166,7 +198,8 @@ Linux — otherwise watch it and interrupt once it has clearly stopped progressi
 The last `Parsing <Class>` / `Compiling <Class>` line on stdout names the file it died
 in — or, if it reached `Analyzing...`, the package. Bisect from there by stubbing out
 functions and comments. Run `uccheck.py` on that file first; it usually finds it
-outright.
+outright. `upredict.py` names the line for the hang it knows: a line whose first
+string ends in an escaped quote.
 
 ## The build
 

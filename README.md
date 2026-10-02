@@ -66,6 +66,20 @@ MyMod/Classes/InWarmupMessage.uc:22: error: enum-default: StackMode=2 -- StackMo
     default. Write the enum name instead
 ```
 
+**`scripts/upredict.py`** — predicts what `UCC make` will do with a mod, without
+running it. It parses and type-checks every class the way UCC does: importer quirks,
+declarations, function bodies with UCC's overload and conversion rules, and the
+`defaultproperties` import. It answers `ok`, UCC's first error (file, line and exact
+message), `hang`, or `unknown` when it hits something it doesn't model. It is scored
+against UCC itself: no wrong outcome across 619 probes, 3493 classes built alone and
+four real mods built whole. How it was built and measured is in `SweeneyParser.md`.
+
+```
+$ upredict.py MyMod --deps WSUTComp
+error  (193 classes in MyMod)
+  Freon_Trigger.uc(23) : Types are incompatible with '*'
+```
+
 **`scripts/ucc-probe.sh`** — UCC is community-patched and there is more than one of it.
 This builds a throwaway package one construct at a time against *your* install and
 reports ok / error / hang, so compiler behaviour is measured rather than inherited as

@@ -27,6 +27,8 @@ class Prediction:
     # ["str", "Foo"]. Only values that differ from the parent's are stored, and a
     # value UCC silently discards is simply absent. None means don't know.
     defaults: dict | None = None
+    # Why the answer is "unknown": (file, what wasn't modelled), one per class.
+    unknown: list[tuple[str, str]] = dataclasses.field(default_factory=list)
 
 
 HANG_MESSAGE = "UCC hangs on 'Analyzing...': this line's first string ends in an escaped quote"
@@ -293,42 +295,70 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     """
     from .context import default_context
     from pathlib import Path
+    import contextlib
     first_error = None
     defaults = None
+    unknown: list = []
     first_name = next((k for f in packages.values() for k in f if k.lower().endswith(".uc")), None)
     all_ok = True
     ctx = default_context(prefer_compiled=True)
-    visible = _stock_packages(ctx) + list(deps or []) + list(packages)
-    for pkg, files in packages.items():
-        # The package directory holds only these files: .uc under Classes, anything
-        # else (an include) at the path its key gives, relative to the package.
-        extra = {k.replace("\\", "/").lower(): v for k, v in files.items()
-                 if not k.lower().endswith(".uc")}
-
-        def read(rel, extra=extra):
-            v = extra.get(rel.replace("\\", "/").lower())
-            return None if v is None else _decode_text(v)
-        pkg_exec = any(_EXEC_LINE.search(_decode_text(src)) for k, src in files.items()
-                       if k.lower().endswith(".uc"))
-        views = _source_views(files, read)
-        with ctx.overlay(pkg, views):
-            for name in _parents_first(files, views):
-                src = files[name]
-                a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read,
-                            package_exec=pkg_exec)
-                if a.view is not None:
-                    ctx.set_source_defaults(a.view.get("name") or Path(name).stem,
-                                            a.defaults, a.view.get("super"))
-                if a.hang_line is not None:
-                    return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
-                if a.error is not None and first_error is None:
-                    first_error = a.error
-                if name == first_name:
-                    defaults = a.defaults     # the first class's, as UCC stored them
-                all_ok = all_ok and a.compiled
+    built: list[str] = []
+    with contextlib.ExitStack() as overlays:
+        for pkg, files in packages.items():
+            if first_error:
+                break                     # UCC stops at the package that failed
+            built.append(pkg)
+            visible = _stock_packages(ctx) + list(deps or []) + built
+            r = _predict_package(ctx, pkg, files, visible, overlays, first_name)
+            if r["hang"] is not None:
+                return r["hang"]
+            first_error = r["error"]
+            if r["defaults_set"]:
+                defaults = r["defaults"]
+            all_ok = all_ok and r["ok"]
+            unknown.extend(r["unknown"])
     if first_error:
         return Prediction("error", [first_error])
-    return Prediction("ok" if all_ok else "unknown", defaults=defaults)
+    return Prediction("ok" if all_ok else "unknown", defaults=defaults, unknown=unknown)
+
+
+def _predict_package(ctx, pkg: str, files: dict, visible: list, overlays, first_name) -> dict:
+    """One package of a predict() build. Its overlay stays on `overlays`, so the
+    packages after it see its classes."""
+    from pathlib import Path
+    out = {"hang": None, "error": None, "defaults": None, "defaults_set": False,
+           "ok": True, "unknown": []}
+    # The package directory holds only these files: .uc under Classes, anything
+    # else (an include) at the path its key gives, relative to the package.
+    extra = {k.replace("\\", "/").lower(): v for k, v in files.items()
+             if not k.lower().endswith(".uc")}
+
+    def read(rel, extra=extra):
+        v = extra.get(rel.replace("\\", "/").lower())
+        return None if v is None else _decode_text(v)
+    pkg_exec = any(_EXEC_LINE.search(_decode_text(src)) for k, src in files.items()
+                   if k.lower().endswith(".uc"))
+    views = _source_views(files, read)
+    overlays.enter_context(ctx.overlay(pkg, views))
+    for name in _parents_first(files, views):
+        src = files[name]
+        a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read,
+                    package_exec=pkg_exec)
+        if a.view is not None:
+            ctx.set_source_defaults(a.view.get("name") or Path(name).stem,
+                                    a.defaults, a.view.get("super"))
+        if a.hang_line is not None:
+            # The importer reads the whole package before compiling: a hang wins.
+            out["hang"] = Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
+            return out
+        if a.error is not None and out["error"] is None:
+            out["error"] = a.error
+        if name == first_name:
+            out["defaults"], out["defaults_set"] = a.defaults, True
+        out["ok"] = out["ok"] and a.compiled
+        if not a.compiled and a.error is None:
+            out["unknown"].append((name, a.unknown or "not modelled"))
+    return out
 
 
 def _parents_first(files: dict, views: list[dict]) -> list[str]:
