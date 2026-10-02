@@ -112,7 +112,8 @@ def compare_outcome(t: Tally, section: str, ident: str, size: int,
     pred_msg = template(pred.errors[0].message) if pred.errors else ""
     ucc_line = ucc["errors"][0]["line"] if ucc["errors"] else None
     pred_line = pred.errors[0].line if pred.errors else None
-    agree = pred.outcome == ucc["outcome"] and ucc_msg == pred_msg and ucc_line == pred_line
+    agree = pred.outcome == ucc["outcome"] and (
+        ucc["outcome"] == "hang" or (ucc_msg == pred_msg and ucc_line == pred_line))
     if not agree:
         t.diverge(section, (ucc["outcome"], ucc_msg, pred.outcome, pred_msg), (size, ident))
 

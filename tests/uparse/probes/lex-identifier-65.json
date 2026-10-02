@@ -1,0 +1,11 @@
+{
+ "outcome": "error",
+ "errors": [
+  {
+   "file": "Probe.uc",
+   "line": 2,
+   "message": "Identifer length exceeds maximum of 64"
+  }
+ ],
+ "ucc_id": "207224 bytes, mtime 2026-07-18 20:40:48"
+}

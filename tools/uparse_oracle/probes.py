@@ -11,6 +11,10 @@ When the probe compiles, the golden also holds "defaults": the class defaults UC
 actually stored, decoded by reflect.py. That is what catches the silent failures --
 a value written one way and stored as something else, or not stored at all.
 
+A suite is many generated probes in one file, tests/uparse/suites/<name>.jsonl, one
+JSON object per line: {"id": ..., "src": <source, Latin-1 text>, "golden": {...}}.
+Generators write the src; this script fills in the golden, the same as for a probe.
+
 Only UCC writes goldens. Nobody edits one by hand -- that is what keeps the
 scoreboard honest when agents work on the parser unattended.
 
@@ -33,6 +37,7 @@ from sandbox import Oracle, default_root  # noqa: E402
 import reflect  # noqa: E402
 
 PROBES = Path(__file__).resolve().parents[2] / "tests" / "uparse" / "probes"
+SUITES = PROBES.parent / "suites"
 
 
 def golden_of(result, ucc_id: str, u_dir: Path | None = None) -> dict:
@@ -45,16 +50,82 @@ def golden_of(result, ucc_id: str, u_dir: Path | None = None) -> dict:
     if result.outcome == "ok" and u_dir and (u_dir / "Probe.u").exists():
         pkg, objects, _ = reflect.load(u_dir / "Probe.u")
         g["defaults"] = reflect.decode_defaults(pkg, objects, "Probe.Probe")
+        lits = literals_of(objects)
+        if lits:
+            g["literals"] = lits
     return g
 
 
-def load_probes(root: Path = PROBES) -> list[tuple[str, bytes, dict | None]]:
+LITERAL_TOKENS = {"IntConst", "IntConstByte", "FloatConst", "StringConst",
+                  "UnicodeStringConst", "NameConst", "ByteConst", "ObjectConst",
+                  "VectorConst", "RotationConst"}
+FIXED_LITERALS = {"IntZero": 0, "IntOne": 1, "True": True, "False": False}
+
+
+def literals_of(objects: dict) -> dict:
+    """{function: [literal, ...]}: the constants UCC compiled into each function of
+    the probe class, in bytecode order. How the lexer read `1e5` or "a\\nb" shows
+    up here as the value UCC actually stored."""
+    out = {}
+    for path, o in objects.items():
+        if o["kind"] != "Function" or not path.startswith("Probe.Probe.") or not o.get("script"):
+            continue
+        found = []
+
+        def walk(tok):
+            if not isinstance(tok, list) or len(tok) < 2 or not isinstance(tok[1], str):
+                return
+            name = tok[1]
+            if name in LITERAL_TOKENS:
+                found.append([name, tok[2]])
+            elif name in FIXED_LITERALS:
+                found.append([name, FIXED_LITERALS[name]])
+            for x in tok[2:]:
+                if isinstance(x, list):
+                    if x and isinstance(x[0], list):
+                        for y in x:
+                            walk(y)
+                    else:
+                        walk(x)
+
+        for tok in o["script"]:
+            walk(tok)
+        if found:
+            out[path[len("Probe.Probe."):]] = found
+    return out
+
+
+def load_probes(root: Path = PROBES, suites: bool = True) -> list[tuple[str, bytes, dict | None]]:
+    """Every probe and suite case as (id, source bytes, golden or None).
+    A suite case's id is <suite>/<case id>."""
     out = []
     for uc in sorted(root.glob("*.uc")):
         gj = uc.with_suffix(".json")
         golden = json.loads(gj.read_text()) if gj.exists() else None
         out.append((uc.stem, uc.read_bytes(), golden))
+    if suites:
+        for path in sorted(SUITES.glob("*.jsonl")):
+            for rec in _read_suite(path):
+                out.append((f"{path.stem}/{rec['id']}", rec["src"].encode("latin-1"),
+                            rec.get("golden")))
     return out
+
+
+def _read_suite(path: Path) -> list[dict]:
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+
+def _save_golden(pid: str, golden: dict) -> None:
+    if "/" not in pid:
+        (PROBES / f"{pid}.json").write_text(json.dumps(golden, indent=1) + "\n")
+        return
+    suite, cid = pid.split("/", 1)
+    path = SUITES / f"{suite}.jsonl"
+    recs = _read_suite(path)
+    for rec in recs:
+        if rec["id"] == cid:
+            rec["golden"] = golden
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs))
 
 
 def main() -> int:
@@ -62,11 +133,15 @@ def main() -> int:
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--n", type=int, default=16)
+    ap.add_argument("--quiet", "-q", action="store_true")
+    ap.add_argument("--only", help="only probes whose id starts with this (e.g. a suite name)")
     ap.add_argument("--timeout", type=float, default=10,
                     help="per build; a real probe build takes ~1s")
     a = ap.parse_args()
 
     probes = load_probes()
+    if a.only:
+        probes = [p for p in probes if p[0].startswith(a.only)]
     todo = probes if (a.refresh or a.check) else [p for p in probes if p[2] is None]
     if not todo:
         print(f"all {len(probes)} probes have goldens")
@@ -83,7 +158,7 @@ def main() -> int:
         built = list(ex.map(build, range(len(todo))))
 
     bad = 0
-    keys = ("outcome", "errors", "defaults")
+    keys = ("outcome", "errors", "defaults", "literals")
     for (pid, _, old), (r, keep) in zip(todo, built):
         new = golden_of(r, o.ucc_id, keep)
         if a.check:
@@ -92,9 +167,10 @@ def main() -> int:
                 bad += 1
                 print(f"DIFFERS  {pid}: golden {old and old['outcome']}, UCC now {r.outcome}")
             continue
-        (PROBES / f"{pid}.json").write_text(json.dumps(new, indent=1) + "\n")
-        first = f"  {r.errors[0].line}: {r.errors[0].message}" if r.errors else ""
-        print(f"{r.outcome:6s} {pid}{first}")
+        _save_golden(pid, new)
+        if not a.quiet:
+            first = f"  {r.errors[0].line}: {r.errors[0].message}" if r.errors else ""
+            print(f"{r.outcome:6s} {pid}{first}")
     shutil.rmtree(work, ignore_errors=True)
     if a.check:
         print(f"{len(todo) - bad} of {len(todo)} goldens agree with UCC")

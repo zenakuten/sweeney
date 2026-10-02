@@ -372,6 +372,59 @@ Guards for unattended running:
 
 Next is P1, the lexer.
 
+## P1: the lexer (done)
+
+`scripts/uparse/importer.py` and `scripts/uparse/lexer.py`, wired into `predict` and
+`check_file`. UCC reads a class in two stages, and the lexer mirrors both:
+
+- **The importer** is line-based. It splits the file into script text,
+  `defaultproperties` text and `cpptext`, and finds the class and parent names. Its
+  quirks:
+  - Lines end at CR, LF or CRLF.
+  - The class name is the word after the first `class` (any case, at a word start)
+    on a line that isn't a comment.
+  - `cpptext` lines become placeholder comments, but **`defaultproperties` lines are
+    dropped**, so compiler line numbers after that block are short by its length
+    (probe `lex-line-after-defaultproperties`: file line 7 is reported as 3).
+  - **The hang lives here.** To strip `//` safely, each script line is scanned for
+    the end of its first string. The scan steps past escaped quotes (`\"`), and if
+    the line's last quote is escaped with nothing after it, it never advances: UCC
+    spins on `Analyzing...`. That covers code lines as well as comments, and never
+    `defaultproperties` lines, which are scanned differently. Epic's code cuts lines
+    at 4095 characters; the 3374 UCC doesn't (probe `lex-line-over-4095`).
+- **The tokenizer** runs on the importer's script text, so its lines are the ones UCC
+  prints. Its quirks:
+  - Block comments nest and are removed character by character, so `a/**/b` is the
+    identifier `ab`.
+  - `*/` outside a comment is an error anywhere.
+  - Strings end at the line; a backslash takes the next character literally, so
+    `"a\nb"` is `anb`.
+  - Names allow spaces.
+  - A number is a digit followed by any of `0-9 . X A-F`: a float if it has a `.`,
+    hex if it has an `X`, else atoi. So **`1e5` is the int 1** and `12ab` is 12.
+  - A sign joins a number only in operand position (the parser's job).
+  - `Type'Pkg.Name'` is read as an object path when the quoted run isn't a valid
+    name, except after `return`/`case`/`goto`.
+
+Measured, all against UCC:
+
+- **Hangs:** 30 of 30 predicted with no false alarms, over the 64 probes plus a
+  generated 300-case suite (`tests/uparse/suites/quotes.jsonl`, from
+  `gen_suites.py quotes`). The suite places quotes and backslashes in line comments,
+  block comments, code strings and `defaultproperties` strings. Of its 300 cases, 29
+  hang, none of them in `defaultproperties`, as predicted.
+- **Lexer-level errors:** all of them match UCC on line and message, over 29 `lex-*`
+  probes. Those probes also check literal values through the bytecode: goldens now
+  record each function's compiled constants (`literals`), and `1e5`→1, `1.5e3`→1500,
+  `0x1f`→31 and `"a\nb"`→`anb` all agree.
+- **Corpus:** 2928 files and 1.58M tokens lex with no errors, and the tokens cover the
+  text with only whitespace and comments between (`lexcheck.py`), in about 4 seconds.
+- **Scoreboard:** `hang.probes` 100/100, `probes.outcome.error` 30/69, `corpus.*` 100%.
+  No wrong predictions.
+
+What P1 can't see is any error a parser would raise before the lexer gets there.
+P2 starts on that.
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,
