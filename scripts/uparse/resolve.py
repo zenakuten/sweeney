@@ -467,17 +467,28 @@ def deferred_errors(view: dict, package: str, ctx: Context) -> list[tuple[int, i
         elif kind == "State":
             _state_errors(f, own, view, package, ctx, out, check_prop)
 
-    names = {g["name"].lower() for g in view["fields"]}
-    for rname, line, pos in view.get("_replicated_at", []):
-        low = rname.lower()
-        if low in names:
-            continue
-        if any(low in i.functions or _has_var(i, low) for i in ctx.ancestry(sup)):
-            # Measured: only the class's own vars and functions can be replicated here.
-            out.append((pos, line, f"Bad variable or function '{rname}' in replication definition"))
-        else:
-            out.append((pos, line, f"Unrecognized variable '{rname}' name in replication definition"))
     return out
+
+
+def replication_name_error(rname: str, view: dict, ctx) -> str | None:
+    """The second pass's check of one replicated name, or None."""
+    low = rname.lower()
+    sup = view.get("super")
+    own = next((g for g in view["fields"] if g["name"].lower() == low
+                and (g["kind"].endswith("Property") or g["kind"] == "Function")), None)
+    if own is not None:
+        if own["kind"] == "Function":
+            for info in ctx.ancestry(sup):
+                if low in info.functions:
+                    return f"Function '{rname}' is defined in base class '{info.name}'"
+            fl = own.get("flags") or []
+            if "native" in fl and "final" in fl:
+                return "Native final functions may not be replicated"
+        return None
+    if any(low in i.functions or _has_var(i, low) for i in ctx.ancestry(sup)):
+        # Only the class's own vars and functions can be replicated here.
+        return f"Bad variable or function '{rname}' in replication definition"
+    return f"Unrecognized variable '{rname}' name in replication definition"
 
 
 def _has_var(info, low: str) -> bool:

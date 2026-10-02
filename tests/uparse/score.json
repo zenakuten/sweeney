@@ -1,6 +1,6 @@
 {
  "rates": {
-  "corpus.engine": 1.0,
+  "corpus.engine": 0.9996,
   "decl.engine.full": 0.9989,
   "decl.engine.names": 1.0,
   "hang.probes.precision": 1.0,

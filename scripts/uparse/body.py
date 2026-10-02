@@ -278,6 +278,7 @@ class Scope:
         self.func = func_field
         self.state = state_field
         self.locals: dict[str, Var] = {}
+        self.body_consts: dict[str, dict] = {}
         if func_field is not None:
             for f in func_field.get("fields", []):
                 fl = set(f.get("flags") or [])
@@ -331,7 +332,10 @@ class Scope:
         if kind == "StructProperty":
             return T("struct", struct=self.resolve_path(f.get("type"), owner, "struct"))
         if kind == "DelegateProperty":
-            return T("delegate", func=f.get("type"))
+            fn = f.get("type") or ""
+            if "." not in fn:
+                fn = f"{owner}.{fn}"          # the declaring class's delegate
+            return T("delegate", func=fn)
         if kind == "ArrayProperty":
             inner = f.get("_inner_field") or f.get("_inner") or f.get("inner_field")
             if inner is None and f.get("inner_type"):
@@ -440,6 +444,8 @@ class Scope:
         low = name.lower()
         if cls is None and in_function and field_class in (None, "var") and low in self.locals:
             return "var", self.locals[low]
+        if cls is None and in_function and field_class is None and low in self.body_consts:
+            return "const", (self.body_consts[low], self.own)
         if cls is None and self.state is not None and field_class in (None, "func"):
             fn = self._state_function(low)
             if fn is not None:
@@ -591,6 +597,21 @@ class Body:
         """A replication condition: the tokens after '(' through the closing ')'."""
         self.expr_required(T("bool"), "Replication condition")
         self.require(")", "Replication condition")
+
+    def register_consts(self) -> None:
+        """`const X = value;` inside a body is a constant of the function."""
+        for k in range(len(self.t) - 3):
+            a, b, c = self.t[k], self.t[k + 1], self.t[k + 2]
+            if a.kind == IDENT and a.text.lower() == "const" and b.kind == IDENT and \
+                    c.kind == SYMBOL and c.text == "=":
+                vals = []
+                j = k + 3
+                while j < len(self.t) and not (self.t[j].kind == SYMBOL and self.t[j].text == ";"):
+                    vals.append(self.t[j].text if self.t[j].kind != STRING
+                                else '"' + self.t[j].value + '"')
+                    j += 1
+                self.s.body_consts[b.text.lower()] = {"kind": "Const", "name": b.text,
+                                                      "_tokens": vals}
 
     def compile(self) -> None:
         """The body between the braces (self.t excludes them)."""
@@ -1152,7 +1173,7 @@ class Body:
         if kind == "const":
             f, owner = obj
             self.next()
-            raise Unsupported("named const")
+            return self._const_value(f, required)
         return NONE
 
     def _delegate_sig(self, t: T):
@@ -1162,6 +1183,38 @@ class Body:
         cls = ".".join(path.split(".")[:-1]) or None
         found = self.s.find(name, "func", cls, in_function=False) if name else None
         return found[1] if found else None
+
+    def _const_value(self, f: dict, required: T) -> T:
+        """A named constant: its stored text read as one literal token."""
+        from .lexer import tokenize, LexError
+        text = f.get("value")
+        if text is None:
+            toks = f.get("_tokens") or f.get("_const_tokens")
+            text = " ".join(toks) if toks else None
+        if text is None:
+            raise Unsupported("const value")
+        try:
+            toks = tokenize(str(text))
+        except LexError:
+            raise self.error("Error in constant")
+        if not toks:
+            raise self.error("Error in constant")
+        sign = 1
+        if toks[0].kind == SYMBOL and toks[0].text in "+-" and len(toks) > 1:
+            sign = -1 if toks[0].text == "-" else 1
+            toks = toks[1:]
+        t0 = toks[0]
+        if t0.kind == INT:
+            return self._attempt_const(T("int", const=True, value=sign * t0.value), required)
+        if t0.kind == FLOAT:
+            return self._attempt_const(T("float", const=True, value=sign * t0.value), required)
+        if t0.kind == STRING:
+            return T("string", const=True, value=t0.value)
+        if t0.kind == NAME:
+            return T("name", const=True, value=t0.value)
+        if t0.kind == IDENT and t0.text.lower() in ("true", "false"):
+            return T("bool", const=True, value=t0.text.lower() == "true")
+        raise Unsupported("const kind")
 
     def _within(self):
         w = self.s.view.get("within")
@@ -1275,6 +1328,10 @@ class Body:
                 r = self.field_expr(tok.cls, required, is_self=False, concrete=True)
                 if r.kind == "none" and not self.got_affector:
                     if m is not None and m.kind == IDENT and self.s.find(m.text, None, tok.cls, False) is None:
+                        chain = self.ts.class_chain(tok.cls)
+                        last = self.s.ctx.info(chain[-1]) if chain else None
+                        if last is not None and last.super is None and last.name.lower() != "object":
+                            raise Unsupported("member of an intrinsic class")
                         raise CompileError(f"Unrecognized member '{m.text}' in class "
                                            f"'{tok.cls.split('.')[-1]}'", m.line)
                 tok = r
@@ -1361,15 +1418,29 @@ def compile_bodies(view_raw_tokens, body_spans, own_view: dict, ctx, package: st
     collect(own_view["fields"], "")
     ts = TypeSystem(ctx, own_view["name"], package, own_view.get("super"), own_structs)
     errors = []
+    # A const declared in any body is visible from every body (measured: LibHTTP4's
+    # HttpUtil declares DAYS_PER_YEAR in one function and uses it in another).
+    shared_consts: dict = {}
     for span in body_spans:
-        func, state, start, end, kind = span
+        probe_scope = Scope(ts, ctx, own_view, None, None)
+        probe = Body(view_raw_tokens[span[2]:span[3]], probe_scope, False, "function", eof_line)
+        probe.register_consts()
+        shared_consts.update(probe_scope.body_consts)
+    from .resolve import replication_name_error
+    for span in body_spans:
+        func, state, start, end, kind, rep = span
         scope = Scope(ts, ctx, own_view, func, state)
+        scope.body_consts.update(shared_consts)
         static = func is not None and "static" in (func.get("flags") or [])
         b = Body(view_raw_tokens[start:end], scope, static,
                  "function" if kind == "replication" else kind, eof_line)
         try:
             if kind == "replication":
                 b.compile_condition()
+                for rname, line, pos in rep["names"]:
+                    msg = replication_name_error(rname, own_view, ctx)
+                    if msg:
+                        return CompileError(msg, line)
             else:
                 b.compile()
         except CompileError as e:

@@ -192,6 +192,7 @@ class DeclParser:
         self.replicated: dict[str, bool] = {}    # name -> reliable
         self.replicated_at: list[tuple[str, int, int]] = []   # (name, line, pos)
         self.rep_conditions: list[tuple[int, int]] = []
+        self.rep_statements: list[dict] = []
         self.error: DeclError | None = None
 
     # ------------------------------------------------------------ top level
@@ -212,6 +213,7 @@ class DeclParser:
                 "config": self.header.get("config"), "within": self.header.get("within"),
                 "fields": self.fields, "_replicated_at": self.replicated_at,
                 "_rep_conditions": self.rep_conditions,
+                "_rep_statements": self.rep_statements,
                 "_header_line": self.header.get("_line")}
 
     def _parse_one(self) -> None:
@@ -644,12 +646,16 @@ class DeclParser:
             open_at = c.i
             c.skip_group("(", ")")
             self.rep_conditions.append((open_at + 1, c.i))   # after '(' .. through ')'
+            names = []
             while True:
                 tok = c.ident("variable name")
                 self.replicated[tok.text.lower()] = reliable
                 self.replicated_at.append((tok.text, tok.line, c.i - 1))
+                names.append((tok.text, tok.line, c.i - 1))
                 if not c.accept(","):
                     break
+            self.rep_statements.append({"cond": (open_at + 1, c.i - len(names) * 2 + 1),
+                                        "names": names, "reliable": reliable})
             c.expect(";")
         c.expect("}")
 

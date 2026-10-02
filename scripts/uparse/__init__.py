@@ -111,6 +111,7 @@ def _analyze(name, src, package, context, path) -> Analysis:
         return Analysis(error=Diag(name, line, msg))
     resolved = resolve_class(view, package, ctx, text)
     resolved["_rep_conditions"] = view.get("_rep_conditions", [])
+    resolved["_rep_statements"] = view.get("_rep_statements", [])
 
     # defaultproperties: imported after everything compiles. Errors there carry no
     # line (0), and UCC's output shows the last line logged.
@@ -158,20 +159,23 @@ _EXEC_LINE = _re.compile(r"^[ \t]*#[ \t]*exec\b", _re.I | _re.M)
 
 
 def _body_spans(view: dict) -> list:
-    """(function field, state field, start, end, kind) for every body in source order."""
+    """Every body, in the order UCC's second pass compiles them: the replication
+    block first, then the class's functions and states newest-first (the order
+    UCC's child list is stored in); inside a state, its functions newest-first,
+    then its code."""
     spans = []
-    for f in view["fields"]:
+    for st in view.get("_rep_statements", []):
+        spans.append((None, None, st["cond"][0], st["cond"][1], "replication", st))
+    for f in reversed(view["fields"]):
         if f["kind"] == "Function" and f.get("_body"):
-            spans.append((f, None, f["_body"][0], f["_body"][1], "function"))
+            spans.append((f, None, f["_body"][0], f["_body"][1], "function", None))
         elif f["kind"] == "State":
-            for g in f.get("fields", []):
+            for g in reversed(f.get("fields", [])):
                 if g["kind"] == "Function" and g.get("_body"):
-                    spans.append((g, f, g["_body"][0], g["_body"][1], "function"))
+                    spans.append((g, f, g["_body"][0], g["_body"][1], "function", None))
             if f.get("_code"):
-                spans.append((None, f, f["_code"][0], f["_code"][1], "state"))
-    for start, end in view.get("_rep_conditions", []):
-        spans.append((None, None, start, end, "replication"))
-    return sorted(spans, key=lambda s: s[2])
+                spans.append((None, f, f["_code"][0], f["_code"][1], "state", None))
+    return spans
 
 
 def _object_literal_error(tokens, ctx, package: str, name: str) -> "Diag | None":
