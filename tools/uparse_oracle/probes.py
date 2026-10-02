@@ -14,6 +14,8 @@ a value written one way and stored as something else, or not stored at all.
 A suite is many generated probes in one file, tests/uparse/suites/<name>.jsonl, one
 JSON object per line: {"id": ..., "src": <source, Latin-1 text>, "golden": {...}}.
 Generators write the src; this script fills in the golden, the same as for a probe.
+A case may add "files": {"Other.uc": <source>}, more classes built in package Probe
+beside Probe.uc (see `package_of`).
 
 Only UCC writes goldens. Nobody edits one by hand -- that is what keeps the
 scoreboard honest when agents work on the parser unattended.
@@ -95,6 +97,15 @@ def literals_of(objects: dict) -> dict:
     return out
 
 
+# Suite cases with more classes than Probe.uc: id -> {file name: source bytes}.
+EXTRA_FILES: dict[str, dict[str, bytes]] = {}
+
+
+def package_of(pid: str, src: bytes) -> dict[str, bytes]:
+    """The files of a probe's package: Probe.uc plus any the case adds."""
+    return {"Probe.uc": src, **EXTRA_FILES.get(pid, {})}
+
+
 def load_probes(root: Path = PROBES, suites: bool = True) -> list[tuple[str, bytes, dict | None]]:
     """Every probe and suite case as (id, source bytes, golden or None).
     A suite case's id is <suite>/<case id>."""
@@ -106,8 +117,10 @@ def load_probes(root: Path = PROBES, suites: bool = True) -> list[tuple[str, byt
     if suites:
         for path in sorted(SUITES.glob("*.jsonl")):
             for rec in _read_suite(path):
-                out.append((f"{path.stem}/{rec['id']}", rec["src"].encode("latin-1"),
-                            rec.get("golden")))
+                pid = f"{path.stem}/{rec['id']}"
+                if rec.get("files"):
+                    EXTRA_FILES[pid] = {k: v.encode("latin-1") for k, v in rec["files"].items()}
+                out.append((pid, rec["src"].encode("latin-1"), rec.get("golden")))
     return out
 
 
@@ -152,7 +165,7 @@ def main() -> int:
 
     def build(k):
         keep = work / str(k)
-        return o.ask({"Probe": {"Probe.uc": todo[k][1]}}, keep_u=keep), keep
+        return o.ask({"Probe": package_of(todo[k][0], todo[k][1])}, keep_u=keep), keep
 
     with cf.ThreadPoolExecutor(a.n) as ex:
         built = list(ex.map(build, range(len(todo))))
@@ -163,7 +176,7 @@ def main() -> int:
     solo = Oracle(1, timeout=max(30.0, a.timeout * 3), use_cache=False)
     for k, (r, keep) in enumerate(built):
         if r.outcome == "hang":
-            r2 = solo.ask({"Probe": {"Probe.uc": todo[k][1]}}, keep_u=keep, retry_hang=False)
+            r2 = solo.ask({"Probe": package_of(todo[k][0], todo[k][1])}, keep_u=keep, retry_hang=False)
             if r2.outcome != "hang":
                 built[k] = (r2, keep)
 

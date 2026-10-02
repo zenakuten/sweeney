@@ -44,19 +44,21 @@ class Analysis:
 
 
 def analyze(name: str, src: bytes, package: str | None = None, context=None,
-            path=None, visible=None, includes=None) -> Analysis:
+            path=None, visible=None, includes=None, package_exec: bool = True) -> Analysis:
     """Run the stages in UCC's order -- importer, lexer, declarations, the checks
     that need other classes -- and keep the first error UCC would hit. `visible`
     limits other classes to the packages this build loads (None: everything known).
     `includes` reads #include paths (rel path -> text or None) when there's no `path`
-    to find them from; with neither, a class that includes a file is "don't know"."""
+    to find them from; with neither, a class that includes a file is "don't know".
+    `package_exec` False says no class of the package has #exec lines, so the
+    package holds only its classes and their subobjects."""
     from .context import default_context
     ctx = context or default_context()
     with ctx.only(visible):
-        return _analyze(name, src, package, ctx, path, includes)
+        return _analyze(name, src, package, ctx, path, includes, package_exec)
 
 
-def _analyze(name, src, package, context, path, includes=None) -> Analysis:
+def _analyze(name, src, package, context, path, includes=None, package_exec=True) -> Analysis:
     from pathlib import Path
     from .importer import import_class, expand_includes
     from .lexer import tokenize_partial
@@ -78,6 +80,13 @@ def _analyze(name, src, package, context, path, includes=None) -> Analysis:
         return Analysis(error=Diag(name, 0, f"Script vs. class name mismatch ({stem}/{im.class_name})"))
     if any(d.strip() == "" for d in im.dependson):
         # dependson() makes an empty name, and UCC crashes on it.
+        return Analysis(error=Diag(name, 0, "General protection fault!"))
+    ctx0 = context
+    if ctx0 is not None and ctx0.visible is not None and any(
+            ctx0.info(d.strip()) is None and d.strip().lower() != stem.lower()
+            for d in im.dependson):
+        # So does a dependson class that isn't loaded (not in this package or one
+        # loaded before it).
         return Analysis(error=Diag(name, 0, "General protection fault!"))
 
     text = im.script_text()
@@ -146,7 +155,7 @@ def _analyze(name, src, package, context, path, includes=None) -> Analysis:
     from .defaults import predict_defaults
     stored, logged, failed, defaults_checked = predict_defaults(
         _with_inner(resolved), [t for _, t in im.defaults], package, ctx, _stock_packages(ctx),
-        has_exec=bool(_EXEC_LINE.search(text)))
+        has_exec=bool(_EXEC_LINE.search(text)), package_exec=package_exec)
     if failed and logged:
         return Analysis(error=Diag(name, 0, logged[-1]), view=resolved)
     # A 64-character identifier gets through the lexer (65 doesn't) but can't be made
@@ -274,14 +283,19 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     """What `UCC make` does with these packages, built in order after the stock ones
     and `deps`. packages: {PackageName: {"Foo.uc": source bytes}}.
 
-    So far: the importer's hang, then the first error from the importer, lexer and
-    declaration checks. The importer runs over every class before anything compiles,
-    so a hang anywhere wins. Errors in function bodies aren't checked yet, so a class
-    that gets through is "unknown", not "ok".
+    The importer runs over every class before anything compiles, so a hang anywhere
+    wins; otherwise the first error -- importer, lexer, declarations, function bodies,
+    defaultproperties -- with a package's classes taken parents first, as UCC does.
+    "ok" only when every stage of every class was modelled; anything that wasn't
+    makes it "unknown". A package's classes see each other, and a key that isn't a
+    .uc is an include file, at its path relative to the package directory.
+    `defaults` are the first class's stored defaults.
     """
     from .context import default_context
+    from pathlib import Path
     first_error = None
     defaults = None
+    first_name = next((k for f in packages.values() for k in f if k.lower().endswith(".uc")), None)
     all_ok = True
     ctx = default_context(prefer_compiled=True)
     visible = _stock_packages(ctx) + list(deps or []) + list(packages)
@@ -294,21 +308,51 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
         def read(rel, extra=extra):
             v = extra.get(rel.replace("\\", "/").lower())
             return None if v is None else _decode_text(v)
-        with ctx.overlay(pkg, _source_views(files, read)):
-            for name, src in files.items():
-                if not name.lower().endswith(".uc"):
-                    continue
-                a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read)
+        pkg_exec = any(_EXEC_LINE.search(_decode_text(src)) for k, src in files.items()
+                       if k.lower().endswith(".uc"))
+        views = _source_views(files, read)
+        with ctx.overlay(pkg, views):
+            for name in _parents_first(files, views):
+                src = files[name]
+                a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read,
+                            package_exec=pkg_exec)
+                if a.view is not None:
+                    ctx.set_source_defaults(a.view.get("name") or Path(name).stem,
+                                            a.defaults, a.view.get("super"))
                 if a.hang_line is not None:
                     return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
                 if a.error is not None and first_error is None:
                     first_error = a.error
-                if sum(1 for k in files if k.lower().endswith(".uc")) == 1:
-                    defaults = a.defaults
+                if name == first_name:
+                    defaults = a.defaults     # the first class's, as UCC stored them
                 all_ok = all_ok and a.compiled
     if first_error:
         return Prediction("error", [first_error])
     return Prediction("ok" if all_ok else "unknown", defaults=defaults)
+
+
+def _parents_first(files: dict, views: list[dict]) -> list[str]:
+    """The package's .uc files in the order UCC compiles them: a class after its
+    parent when both are in the package, otherwise as given."""
+    from pathlib import Path
+    names = [k for k in files if k.lower().endswith(".uc")]
+    by_class = {Path(k).stem.lower(): k for k in names}
+    parent = {(v.get("name") or "").lower(): (v.get("super") or "").split(".")[-1].lower()
+              for v in views}
+    out, seen = [], set()
+
+    def visit(k, depth=0):
+        if k in seen or depth > 64:
+            return
+        p = parent.get(Path(k).stem.lower())
+        if p in by_class and by_class[p] != k:
+            visit(by_class[p], depth + 1)
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    for k in names:
+        visit(k)
+    return out
 
 
 def _source_views(files: dict, read) -> list[dict]:

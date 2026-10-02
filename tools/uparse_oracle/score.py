@@ -44,7 +44,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import uparse  # noqa: E402
-from probes import load_probes  # noqa: E402
+from probes import load_probes, package_of  # noqa: E402
 from sandbox import default_root, sweeney_config  # noqa: E402
 
 REPO_SCORE = REPO / "tests" / "uparse" / "score.json"
@@ -180,7 +180,7 @@ def score_probes(t: Tally) -> None:
         if golden is None:
             print(f"warning: probe {pid} has no golden; run probes.py", file=sys.stderr)
             continue
-        pred = uparse.predict({"Probe": {"Probe.uc": src}})
+        pred = uparse.predict({"Probe": package_of(pid, src)})
         compare_outcome(t, "probes", pid, len(src), golden, pred)
 
 

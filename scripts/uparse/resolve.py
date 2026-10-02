@@ -542,9 +542,6 @@ def _function_errors(f, state, own, view, package, ctx, out, check_prop) -> None
     flags = set(f.get("flags") or [])
     word = f.get("_kind_word") or "function"
     line = f.get("_check_line", line)
-    if ("static" in pflags) != ("static" in flags):
-        out.append((pos, line, f"Function '{f['name']}' specifiers differ from original"))
-        return
     differs_msg = f"Redefinition of '{word} {f['name']}' differs from original in {pinfo.name}"
     if len(_parms(pf)) != len(_parms(f)) or (_returns(pf) is None) != (_returns(f) is None):
         out.append((pos, line, differs_msg))
@@ -575,6 +572,10 @@ def _function_errors(f, state, own, view, package, ctx, out, check_prop) -> None
             else:
                 out.append((pos, line, differs_msg))
             return
+    # Then the specifiers (FUNC_FuncOverrideMatch), then 'final'.
+    if ("static" in pflags) != ("static" in flags):
+        out.append((pos, line, f"Function '{f['name']}' specifiers differ from original"))
+        return
     if "final" in pflags:
         out.append((pos, line, differs_msg))
 

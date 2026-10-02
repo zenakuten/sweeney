@@ -296,7 +296,14 @@ class Sandbox:
             cls = self.path / name / "Classes"
             cls.mkdir(parents=True)
             for fname, src in files.items():
-                (cls / fname).write_bytes(src)
+                # A class goes in Classes; anything else (an include) at its path
+                # relative to the package directory.
+                if fname.lower().endswith(".uc") and "/" not in fname:
+                    (cls / fname).write_bytes(src)
+                else:
+                    dest = self.path / name / fname.replace("\\", "/")
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(src)
         ini = self.system / "sweeney-make.ini"
         ini.write_text(make_ini(self.install, stock_packages(self.install) + deps + names),
                        encoding="latin-1", newline="")

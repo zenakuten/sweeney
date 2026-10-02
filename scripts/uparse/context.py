@@ -101,6 +101,8 @@ class Context:
         # of `visible` is only what their import tables name.
         self.fully_loaded: set | None = None
         self.last_hits: list = []                 # find_loaded's in-memory matches
+        # Classes being built: lower name -> (own stored defaults or None, parent).
+        self.source_defaults: dict[str, tuple] = {}
         self._imported_paths: dict[str, set] = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
         self.struct_owners: dict[str, list] = {}  # every class declaring a struct of that name
@@ -346,7 +348,9 @@ class Context:
         class _Overlay:
             def __enter__(self_):
                 self_.saved = (ctx.classes, ctx.by_package, ctx.struct_owner, ctx.enum_owner,
-                               ctx.struct_owners, ctx.enum_owners, ctx._effective)
+                               ctx.struct_owners, ctx.enum_owners, ctx._effective,
+                               ctx.source_defaults)
+                ctx.source_defaults = dict(ctx.source_defaults)
                 ctx.classes, ctx.by_package = dict(ctx.classes), dict(ctx.by_package)
                 ctx.struct_owner, ctx.enum_owner = dict(ctx.struct_owner), dict(ctx.enum_owner)
                 ctx.struct_owners = {k: list(v) for k, v in ctx.struct_owners.items()}
@@ -372,8 +376,14 @@ class Context:
 
             def __exit__(self_, *exc):
                 (ctx.classes, ctx.by_package, ctx.struct_owner, ctx.enum_owner,
-                 ctx.struct_owners, ctx.enum_owners, ctx._effective) = self_.saved
+                 ctx.struct_owners, ctx.enum_owners, ctx._effective,
+                 ctx.source_defaults) = self_.saved
         return _Overlay()
+
+    def set_source_defaults(self, cls: str, own: dict | None, parent: str | None) -> None:
+        """Record a built class's predicted defaults, for its subclasses."""
+        self.source_defaults[cls.lower()] = (own, (parent or "").split(".")[-1].lower() or None)
+        self._effective = {}
 
     def only(self, packages):
         """A context manager limiting lookups to these packages."""
@@ -431,11 +441,15 @@ class Context:
         low = cls.split(".")[-1].lower()
         if low in self._effective:
             return self._effective[low]
-        own = self.compiled_defaults.get(low)
+        if low in self.source_defaults:
+            # A class of the package being built, predicted from its source.
+            own, parent = self.source_defaults[low]
+        else:
+            own = self.compiled_defaults.get(low)
+            parent = self.compiled_super.get(low)
         if own is None:
             self._effective[low] = None
             return None
-        parent = self.compiled_super.get(low)
         base = self.effective_defaults(parent) if parent else {}
         if base is None:
             self._effective[low] = None

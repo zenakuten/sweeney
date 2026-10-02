@@ -623,7 +623,7 @@ def _split_lines(lines: list[str]) -> list[str]:
 # ---------------------------------------------------------------- glue
 
 def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_packages=(),
-                     has_exec: bool = False):
+                     has_exec: bool = False, package_exec: bool = True):
     """(stored defaults or None, list of logged lines, failed?) for a resolved class."""
     name = view["name"]
     sup = view.get("super")
@@ -715,7 +715,22 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
             return UNKNOWN
         pkg_name = path.split(".")[0]
         if pkg_name.lower() in (package.lower(), name.lower()):
-            return UNKNOWN                # objects of the package being built
+            # Objects of the package being built. Pkg.Name or Class.Name is a
+            # subobject created so far, a member of the class, or a class of the
+            # package; without #exec lines nothing else is there.
+            parts = path.split(".")
+            if len(parts) != 2 or has_exec or package_exec:
+                return UNKNOWN
+            leaf = parts[1].lower()
+            if leaf in _current_importer.subobjects:
+                return UNKNOWN
+            if pkg_name.lower() == name.lower() and leaf in own_names:
+                return UNKNOWN
+            if pkg_name.lower() == package.lower():
+                info = ctx.info(parts[1], package)
+                if info is not None and info.package.lower() == package.lower():
+                    return (info.path(), "Class")
+            return None
         if cls == "class" or (cls or "").lower() == "class":
             info = ctx.info(path)
             return (info.path(), "Class") if info is not None and \
@@ -764,6 +779,7 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
     imp.resolve_inner = resolve_prop
     globals()["_current_importer"] = imp
     own_fns = {f["name"].lower() for f in own_fields if f["kind"] == "Function"}
+    own_names = {f["name"].lower() for f in own_fields}
     imp.function_exists = lambda low: low in own_fns or any(
         low in i.functions for i in ctx.ancestry(sup))
     imp.run(lines)
