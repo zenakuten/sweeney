@@ -6,10 +6,10 @@
   "hang.probes.precision": 1.0,
   "hang.probes.recall": 1.0,
   "probes.defaults": 0.0,
-  "probes.line": 0.4348,
-  "probes.message": 0.4348,
-  "probes.outcome": 0.1527,
-  "probes.outcome.error": 0.4348,
+  "probes.line": 0.827,
+  "probes.message": 0.827,
+  "probes.outcome": 0.3395,
+  "probes.outcome.error": 0.827,
   "probes.outcome.hang": 1.0,
   "probes.outcome.ok": 0.0
  }

@@ -50,6 +50,9 @@ from pathlib import Path
 CONTENT_DIRS = ("Textures", "Sounds", "StaticMeshes", "Animations", "Music", "Maps",
                 "KarmaData", "Speech")
 DEFAULT_TIMEOUT = 30
+# Part of every cache key: bump when parse_output changes what a build's output
+# means, so results parsed the old way aren't served from the cache.
+PARSE_VERSION = 3
 IS_WINDOWS = os.name == "nt"
 
 ERROR_RE = re.compile(r"^(?P<file>.*?\.uc)\((?P<line>\d+)\) : (?P<kind>Error|Warning), (?P<msg>.*)$")
@@ -150,11 +153,21 @@ class Result:
         return cls(**d, cached=True)
 
 
-def parse_output(text: str) -> tuple[list[Diag], list[Diag], str]:
+PROGRESS = ("Loading ", "Exporting Cache", "Analyzing", "Success -", "Failure -", "Calling ",
+            "Warning: ", "Log: ")
+FAILURE_RE = re.compile(r"Failure - (\d+) error\(s\)")
+
+
+def parse_output(text: str, class_names: tuple = ()) -> tuple[list[Diag], list[Diag], str]:
+    """UCC's console output into (errors, warnings, last stage). `class_names` are the
+    classes being built: a fatal message can be glued onto a progress line
+    ("Parsing ProbeCast of NULL to Struct failed"), and knowing the class splits it."""
     errors, warnings, stage = [], [], ""
     stage_class = ""
     unprefixed = ""     # last line that was neither progress nor a File.uc(N) diagnostic
+    first_unprefixed = ""
     aborted = False
+    failures = 0
     # UCC overwrites progress with bare CRs; treat them as line breaks.
     for raw in text.replace("\r", "\n").split("\n"):
         line = raw.strip()
@@ -166,15 +179,30 @@ def parse_output(text: str) -> tuple[list[Diag], list[Diag], str]:
             continue
         m = STAGE_RE.match(line)
         if m:
-            stage, stage_class = line, m.group(1)
-            continue
+            glued = ""
+            for cn in class_names:
+                head = line[:m.start(1)] + cn
+                if line.startswith(head) and len(line) > len(head) and \
+                        m.group(1).lower() != cn.lower():
+                    stage, stage_class, glued = head, cn, line[len(head):].strip()
+                    break
+            else:
+                stage, stage_class = line, m.group(1)
+            if not glued:
+                continue
+            line = glued
         if line in ("Compile aborted due to errors.", "Exiting due to error"):
             aborted = True
             continue
+        fm = FAILURE_RE.search(line)
+        if fm:
+            failures = int(fm.group(1))
         m = ERROR_RE.match(line)
         if not m:
-            if not SUMMARY_RE.match(line):
+            if not SUMMARY_RE.match(line) and not line.startswith(PROGRESS) \
+                    and not line.startswith("-"):
                 unprefixed = line
+                first_unprefixed = first_unprefixed or line
             continue
         msg = m.group("msg")
         if SUMMARY_RE.match(msg):
@@ -188,7 +216,36 @@ def parse_output(text: str) -> tuple[list[Diag], list[Diag], str]:
     # error"). Line 0 means UCC gave none.
     if aborted and not errors and unprefixed:
         errors.append(Diag(f"{stage_class}.uc" if stage_class else "", 0, "Error", unprefixed))
+    elif failures and not errors:
+        # Counted but not shown as File.uc(N): the first stray message line, if any
+        # ("Bad class definition ..."), else UCC printed no text for it at all.
+        errors.append(Diag(f"{stage_class}.uc" if stage_class else "", 0, "Error",
+                           first_unprefixed))
     return errors, warnings, stage
+
+
+class _SandboxLock:
+    """An exclusive lock on a sandbox directory, across processes (no-op where
+    fcntl is missing, i.e. native Windows)."""
+
+    def __init__(self, path: Path):
+        self.file = Path(path) / ".lock"
+
+    def __enter__(self):
+        try:
+            import fcntl
+        except ImportError:
+            self.fh = None
+            return self
+        self.fh = open(self.file, "w")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        if self.fh:
+            import fcntl
+            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            self.fh.close()
 
 
 class Sandbox:
@@ -227,7 +284,12 @@ class Sandbox:
 
     def build(self, packages: dict[str, dict[str, bytes]], deps: list[str],
               timeout: float, keep_u: Path | None = None) -> Result:
-        """packages: {PackageName: {"Foo.uc": source bytes}}, built in dict order."""
+        """packages: {PackageName: {"Foo.uc": source bytes}}, built in dict order.
+        Holds an exclusive lock on the sandbox, so two processes never share one."""
+        with _SandboxLock(self.path):
+            return self._build(packages, deps, timeout, keep_u)
+
+    def _build(self, packages, deps, timeout, keep_u) -> Result:
         names = list(packages)
         self._clear_packages(names)
         for name, files in packages.items():
@@ -244,8 +306,12 @@ class Sandbox:
             cmd.insert(0, "wine")
         env = dict(os.environ, WINEDEBUG="-all")
         t0 = time.monotonic()
-        proc = subprocess.Popen(cmd, cwd=self.system, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, start_new_session=not IS_WINDOWS)
+        # stdin is empty on purpose: for a native class UCC asks "Do you want to
+        # overwrite the existing version? (Y/N)" about its C++ header, and with an
+        # open stdin it waits for an answer -- which looks exactly like a hang.
+        proc = subprocess.Popen(cmd, cwd=self.system, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                start_new_session=not IS_WINDOWS)
         try:
             out, _ = proc.communicate(timeout=timeout)
             hung = False
@@ -258,7 +324,8 @@ class Sandbox:
             hung = True
         secs = time.monotonic() - t0
         text = out.decode("latin-1", "replace")
-        errors, warnings, stage = parse_output(text)
+        class_names = tuple(Path(fn).stem for files in packages.values() for fn in files)
+        errors, warnings, stage = parse_output(text, class_names)
 
         built = all((self.system / (n + ".u")).exists() for n in names)
         if hung:
@@ -322,7 +389,7 @@ class Oracle:
 
     def key(self, packages: dict[str, dict[str, bytes]], deps: list[str]) -> str:
         h = hashlib.sha256()
-        h.update(self.ucc_id.encode())
+        h.update(f"{self.ucc_id}/parse{PARSE_VERSION}".encode())
         h.update(json.dumps(deps).encode())
         for name, files in packages.items():
             h.update(b"\0P" + name.encode())
@@ -331,7 +398,8 @@ class Oracle:
         return h.hexdigest()
 
     def ask(self, packages: dict[str, dict[str, bytes]] | dict[str, bytes],
-            deps: list[str] | None = None, keep_u: Path | None = None) -> Result:
+            deps: list[str] | None = None, keep_u: Path | None = None,
+            retry_hang: bool = True) -> Result:
         """Build and report. A bare {file: bytes} is taken as package Probe."""
         if packages and isinstance(next(iter(packages.values())), (bytes, bytearray)):
             packages = {"Probe": packages}  # type: ignore[dict-item]
@@ -344,7 +412,7 @@ class Oracle:
         sb = self.pool.get()
         try:
             r = sb.build(packages, deps, self.timeout, keep_u)  # type: ignore[arg-type]
-            if r.outcome == "hang":
+            if r.outcome == "hang" and retry_hang:
                 # A loaded machine can stall a build; only a second, longer miss counts.
                 r2 = sb.build(packages, deps, self.timeout * 2, keep_u)  # type: ignore[arg-type]
                 r = r2 if r2.outcome != "hang" else r

@@ -35,6 +35,7 @@ class ClassInfo:
         self.has_config = False
         self.consts: dict[str, list[str]] = {}    # lower const name -> value tokens
         self.state_ext: dict[str, str] = {}       # lower state -> the state it extends
+        self.vars: set[str] = set()
 
     def path(self) -> str:
         return f"{self.package}.{self.name}"
@@ -96,6 +97,7 @@ class Context:
                 info.functions[low] = f["name"]
                 info.function_defs[low] = f
             elif f["kind"].endswith("Property"):
+                info.vars.add(low)
                 fl = f.get("flags") or []
                 if "localized" in fl:
                     info.has_localized = True
@@ -275,11 +277,14 @@ class Context:
         qualified = "." in word
         if own is not None and not qualified:
             owner_path = f"{own['package']}.{own['name']}"
-            for f in own["fields"]:
-                if f["name"].lower() == low and f["kind"] == "Struct":
-                    return "struct", f"{owner_path}.{f['name']}"
-                if f["name"].lower() == low and f["kind"] == "Enum":
-                    return "enum", f"{owner_path}.{f['name']}"
+            stack = [(owner_path, own["fields"])]
+            while stack:
+                path, fields = stack.pop(0)
+                for f in fields:
+                    if f["name"].lower() == low and f["kind"] in ("Struct", "Enum"):
+                        return ("struct" if f["kind"] == "Struct" else "enum"), f"{path}.{f['name']}"
+                    if f["kind"] == "Struct":
+                        stack.append((f"{path}.{f['name']}", f.get("fields", [])))
             parent = own.get("super")
         else:
             parent = cls
@@ -289,6 +294,8 @@ class Context:
                     return "struct", f"{info.path()}.{info.structs[low]}"
                 if low in info.enums:
                     return "enum", f"{info.path()}.{info.enums[low]}"
+        if own is not None and low == own["name"].lower():
+            return "class", f"{own['package']}.{own['name']}"
         target = self.info(word, own["package"] if own is not None else None)
         if target is not None:
             return "class", target.path()

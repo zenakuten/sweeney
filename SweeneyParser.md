@@ -488,8 +488,55 @@ packages: `UT2004MCP.u` predates its source, and `WS3SPN.u` was built against an
 - **Names compare without case.** UCC stores a name in whichever spelling its global
   name table saw first (`HUD` against `Hud`), which no parser can predict.
 
-Next in P2: the error catalogue, i.e. declaration errors reported with UCC's line
-and message.
+### The declaration error catalogue
+
+`tests/uparse/suites/declerrors.jsonl` and `declerrors2.jsonl` hold about 150 minimal
+classes, one per declaration error (harvested from the compiler's error sites under
+the C++ rule), each labelled by UCC. `decl.py` raises the ones that need only the
+file. `resolve.deferred_errors` raises the ones that need other classes: unknown
+types, overriding a final function, `ignores` targets, replicated names, state
+`extends`. Each carries its token position, so the first error in the file wins, as
+in UCC. `uparse.analyze` runs the stages in UCC's order: importer hang, importer
+errors (`Bad class definition`, `Script vs. class name mismatch`), lexer,
+declarations, deferred checks.
+
+Measured along the way:
+
+- **The comment hang has a lookalike.** For a `native` class, UCC writes a C++
+  header and, if one exists, asks `Do you want to overwrite the existing version?
+  (Y/N)` on stdin. With an open stdin it waits forever, which looks exactly like a
+  hang. The harness now gives UCC an empty stdin, and `probes.py` re-checks any hang
+  on its own before recording it, since a stall under full parallel load can also
+  pass for one.
+- **Some errors print no `File.uc(N)` line.** Class-name mismatches print
+  `Script vs. class name mismatch (Probe/Wrong)` bare. A struct with an unknown
+  parent prints `Cast of NULL to Struct failed` glued onto `Parsing Probe`. A
+  duplicate `const` and an empty `dependson()` crash UCC outright (a backtrace, and
+  `General protection fault!`).
+- **Line rules.** Most errors land on the offending token's line. An unknown
+  `#directive` reports the line *after* the `#`. "Unexpected end of script" reports
+  the line after the last.
+- **What isn't an error:** redeclaring a parent's var (`var int Tag;`), `var int A[]`,
+  `var string[32] S` (obsolete size, ignored), a trailing comma in an enum, an empty
+  struct. `reliable`/`unreliable` aren't function modifiers in UE2, so `reliable
+  client function` is `Unexpected 'reliable'`.
+
+Also measured in the second batch:
+- Locals use the plain `Variable declaration` prefix; parameters use
+  `Function parameter`. A local can't reuse a parameter's name.
+- Limits: 16 parameters and 2048 array elements (`A[-1]` reports -1).
+- An unknown return type is `Bad function definition` (UCC reads the word as the
+  function's name), and an operator with an unusable symbol is
+  `Bad preoperator definition`.
+- Replicating a *parent's* variable is `Bad variable or function 'Tag' in replication
+  definition`: only the class's own vars and functions can be listed.
+- A stray `;` after a function body is `Unexpected ';'`, and a `local struct` gives
+  the enum message.
+
+**Scoreboard:** `probes.outcome.error` rose from 30 to 153 of 185, all on the exact
+line and message. Seed classes UCC rejects: 164 of 507 predicted exactly, with **no
+error predicted for any class UCC accepts** (corpus and `ok` seeds alike). What's left
+is mostly errors in function bodies (P4) and in `defaultproperties` import (P6).
 
 ## Oracle 3: `reflect.py`
 

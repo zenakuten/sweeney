@@ -157,6 +157,16 @@ def main() -> int:
     with cf.ThreadPoolExecutor(a.n) as ex:
         built = list(ex.map(build, range(len(todo))))
 
+    # A hang under a full parallel load can be a stall. Before one becomes a golden,
+    # build it again on its own with a generous limit (a native class once "hung"
+    # at 10s/20s under load and compiled in 1.5s alone).
+    solo = Oracle(1, timeout=max(30.0, a.timeout * 3), use_cache=False)
+    for k, (r, keep) in enumerate(built):
+        if r.outcome == "hang":
+            r2 = solo.ask({"Probe": {"Probe.uc": todo[k][1]}}, keep_u=keep, retry_hang=False)
+            if r2.outcome != "hang":
+                built[k] = (r2, keep)
+
     bad = 0
     keys = ("outcome", "errors", "defaults", "literals")
     for (pid, _, old), (r, keep) in zip(todo, built):

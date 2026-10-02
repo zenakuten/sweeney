@@ -314,3 +314,34 @@ def _atof(s: str) -> float:
 def _int32(n: int) -> int:
     n &= 0xFFFFFFFF
     return n - (1 << 32) if n & 0x80000000 else n
+
+
+def tokenize_partial(text: str) -> tuple[list[Token], LexError | None]:
+    """Tokens up to the first lexer error, and that error (or None). The parser runs
+    on what came before: UCC reports whichever problem it reaches first."""
+    lx = Lexer(text)
+    out: list[Token] = []
+    while True:
+        saved = lx.state()
+        try:
+            t = lx.token()
+        except LexError as e:
+            if not (e.message == "Illegal character in name" and out and out[-1].kind == IDENT
+                    and out[-1].text.lower() not in NAME_CONTEXT):
+                return out, e
+            lx.restore(saved)
+            try:
+                t = lx.object_path(out[-1].text)
+            except LexError as e2:
+                return out, e2
+        if t is None:
+            return out, None
+        out.append(t)
+        if (t.kind == IDENT and len(out) >= 2 and out[-2].kind == SYMBOL
+                and out[-2].text == "#" and t.text.lower() in RAW_DIRECTIVES):
+            try:
+                raw = lx.raw_line()
+            except LexError as e:
+                return out, e
+            if raw:
+                out.append(raw)

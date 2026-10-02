@@ -346,3 +346,166 @@ class _Resolver:
             if f["name"].lower() in info.states:
                 return f"{info.path()}.{f['name']}"
         return None
+
+
+# ---------------------------------------------------------------- declaration errors
+
+def deferred_errors(view: dict, package: str, ctx: Context) -> list[tuple[int, int, str]]:
+    """Declaration errors that need other classes, as (token position, line, message).
+    A missing superclass is fatal before parsing starts, so it sorts first (-1)."""
+    out: list[tuple[int, int, str]] = []
+    name = view.get("name") or ""
+    sup = view.get("super")
+    if sup and ctx.info(sup) is None:
+        out.append((-1, 0, f"Superclass {sup} of class {name} not found"))
+        return out
+    own = {"package": package, "name": name, "fields": view["fields"], "super": sup}
+
+    def check_type(t: dict | None, thing: str = "") -> None:
+        if not t:
+            return
+        if t.get("kind") == "UnresolvedProperty":
+            if ctx.resolve_type(t["type"], name, own) is None:
+                msg = t.get("_bad_def") or f"Unrecognized type '{t['type']}'"
+                out.append((t.get("_tpos", 0), t.get("_line", 0), msg))
+        elif t.get("kind") == "ClassProperty" and t.get("meta_class") and "_meta_tpos" in t:
+            r = ctx.resolve_type(t["meta_class"], name, own)
+            if r is None or r[0] != "class":
+                out.append((t["_meta_tpos"], t["_meta_line"],
+                            f"'class': Limitor '{t['meta_class']}' is not a class name"))
+        elif t.get("kind") == "ArrayProperty":
+            check_type(t.get("inner_type"))
+
+    def check_prop(f: dict) -> None:
+        check_type(f.get("_type"))
+        dim = f.get("array_dim")
+        if isinstance(dim, dict):
+            cname = dim["const"][0].lower()
+            known = any(g["kind"] == "Const" and g["name"].lower() == cname for g in view["fields"]) \
+                or any(cname in i.consts for i in ctx.ancestry(sup))
+            if not known:
+                out.append((f.get("_tpos", 0), dim.get("_line", f.get("_line", 0)),
+                            f"{dim.get('_thing', 'Variable declaration')}: Illegal array size 1"))
+
+    for f in view["fields"]:
+        kind = f["kind"]
+        if kind.endswith("Property"):
+            check_prop(f)
+        elif kind == "Struct":
+            for m in f.get("fields", []):
+                if m["kind"].endswith("Property"):
+                    check_prop(m)
+            if f.get("super") and ctx.resolve_type(f["super"], name, own) is None:
+                out.append((f.get("_tpos", 0), 0, "Cast of NULL to Struct failed"))
+        elif kind == "Function":
+            _function_errors(f, None, own, view, package, ctx, out, check_prop)
+        elif kind == "State":
+            _state_errors(f, own, view, package, ctx, out, check_prop)
+
+    names = {g["name"].lower() for g in view["fields"]}
+    for rname, line, pos in view.get("_replicated_at", []):
+        low = rname.lower()
+        if low in names:
+            continue
+        if any(low in i.functions or _has_var(i, low) for i in ctx.ancestry(sup)):
+            # Measured: only the class's own vars and functions can be replicated here.
+            out.append((pos, line, f"Bad variable or function '{rname}' in replication definition"))
+        else:
+            out.append((pos, line, f"Unrecognized variable '{rname}' name in replication definition"))
+    return out
+
+
+def _has_var(info, low: str) -> bool:
+    return low in getattr(info, "vars", set())
+
+
+def _parent_function(low: str, sup: str | None, ctx: Context):
+    for info in ctx.ancestry(sup):
+        f = info.function_defs.get(low)
+        if f is not None:
+            return info, f
+    return None, None
+
+
+def _parms(f: dict) -> list[dict]:
+    return [p for p in f.get("fields", []) if "parm" in (p.get("flags") or [])
+            and "return" not in (p.get("flags") or [])]
+
+
+def _returns(f: dict) -> dict | None:
+    for p in f.get("fields", []):
+        if "return" in (p.get("flags") or []):
+            return p
+    return None
+
+
+def _function_errors(f, state, own, view, package, ctx, out, check_prop) -> None:
+    pos, line = f.get("_tpos", 0), f.get("_line", 0)
+    for p in f.get("fields", []):
+        if p["kind"].endswith("Property"):
+            check_prop(p)
+    if f.get("_ret"):
+        r = f["_ret"]
+        if r.get("kind") == "UnresolvedProperty" and ctx.resolve_type(r["type"], own["name"], own) is None:
+            out.append((r.get("_tpos", pos), r.get("_line", line), r.get("_bad_def", "Bad function definition")))
+            return
+    if f.get("_conflict_state"):
+        out.append((pos, line, f"'{f['name']}' conflicts with 'Function {package}.{own['name']}.{f['_conflict_state']}.{f['name']}'"))
+        return
+    if f.get("_conflict"):
+        out.append((pos, line, f"'{f['name']}' conflicts with 'Function {package}.{own['name']}.{f['name']}'"))
+        return
+    if "operator" in (f.get("flags") or []) or "delegate" in (f.get("flags") or []):
+        return
+    if state is not None:
+        return
+    pinfo, pf = _parent_function(f["name"].lower(), own.get("super"), ctx)
+    if pf is None:
+        return
+    pflags = set(pf.get("flags") or [])
+    flags = set(f.get("flags") or [])
+    word = f.get("_kind_word") or "function"
+    if ("static" in pflags) != ("static" in flags):
+        out.append((pos, line, f"Function '{f['name']}' specifiers differ from original"))
+        return
+    differs = "final" in pflags
+    if len(_parms(pf)) != len(_parms(f)):
+        differs = True
+    if (_returns(pf) is None) != (_returns(f) is None):
+        differs = True
+    if differs:
+        out.append((pos, line, f"Redefinition of '{word} {f['name']}' differs from original in {pinfo.name}"))
+
+
+def _state_errors(st, own, view, package, ctx, out, check_prop) -> None:
+    sup = own.get("super")
+    if st.get("super"):
+        ext = st["super"].lower()
+        in_own = any(g["kind"] == "State" and g["name"].lower() == ext for g in view["fields"])
+        in_parents = any(ext in i.states for i in ctx.ancestry(sup))
+        spos, sline = st.get("_super_tpos", st.get("_tpos", 0)), st.get("_super_line", 0)
+        if any(st["name"].lower() in i.states for i in ctx.ancestry(sup)):
+            out.append((spos, sline, f"'Extends' not allowed here: state '{st['name']}' "
+                                     "overrides version in parent class"))
+        elif not in_own and not in_parents:
+            out.append((spos, sline, f"'extends': Parent state '{st['super']}' not found"))
+    for g in st.get("fields", []):
+        if g.get("_ignored"):
+            low = g["name"].lower()
+            if low in PROBE_NAMES:
+                continue
+            target = None
+            for h in view["fields"]:
+                if h["kind"] == "Function" and h["name"].lower() == low and \
+                        h.get("_pos", 0) < st.get("_pos", 1 << 30):
+                    target = h
+            if target is None:
+                _, target = _parent_function(low, sup, ctx)
+            if target is None:
+                out.append((g.get("_tpos", 0), g.get("_line", 0),
+                            f"'Ignores': '{g['name']}' is not a function"))
+            elif "final" in (target.get("flags") or []):
+                out.append((g.get("_tpos", 0), g.get("_line", 0),
+                            f"'{g['name']}': Cannot ignore final functions"))
+        elif g["kind"] == "Function":
+            _function_errors(g, st, own, view, package, ctx, out, check_prop)
