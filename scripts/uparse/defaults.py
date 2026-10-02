@@ -150,8 +150,10 @@ class DefaultsImporter:
         for raw in _split_lines(lines):
             m = re.match(r"\s*begin\s+object\b.*?\bname\s*=\s*(\w+)", raw, re.I)
             if m:
-                self.subobjects.add(m.group(1).lower())
                 c = re.search(r"\bclass\s*=\s*([\w.]+)", raw, re.I)
+                if c and self._class_missing(c.group(1)):
+                    continue              # never created
+                self.subobjects.add(m.group(1).lower())
                 if c:
                     self.subobject_class[m.group(1).lower()] = c.group(1)
         self._defined = set()
@@ -175,6 +177,11 @@ class DefaultsImporter:
                 # A subobject: its lines set the subobject class's properties. Nothing
                 # is stored in this class's defaults, but its errors still fail the build.
                 m = re.search(r"\bclass\s*=\s*([\w.]+)", s, re.I)
+                if m and self._class_missing(m.group(1)):
+                    # ParseObject finds no class: nothing is created and the depth
+                    # stays, so the lines that follow set the enclosing object's
+                    # properties, and its End Object closes the enclosing one.
+                    return
                 self._stack.append(self._subobject_props(m.group(1) if m else None))
                 return
             if re.match(r"end\s+object\b", low):
@@ -197,6 +204,12 @@ class DefaultsImporter:
                      self._defined) = saved
                 return
             self._assign(raw, s)
+
+    def _class_missing(self, cls: str) -> bool:
+        """Sure that no class of that name is loaded."""
+        if self.ctx.visible is None or self.ctx.info(cls) is not None:
+            return False
+        return cls.split(".")[-1].lower() != self.class_name.lower()
 
     def _subobject_props(self, cls: str | None):
         """{lower name: property} for a subobject's class, or None if unknown."""
@@ -448,6 +461,9 @@ class DefaultsImporter:
                 return None
             obj_path, rest = t2[0], t2[1][1:]
             cls = tok
+            if self._class_missing(cls):
+                self.log_error(f"{full}: unresolved cast in '{buf}'")
+                return None
             found = self.object_exists(cls, obj_path, True)
         else:
             obj_path = tok

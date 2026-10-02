@@ -338,6 +338,43 @@ class Context:
             self._rank = {p: i for i, p in enumerate(pk)}
         return self._rank
 
+    def overlay(self, package: str, views: list[dict]):
+        """A context manager adding the classes of a package being built, from
+        their source views, in place of anything known under the same names."""
+        ctx = self
+
+        class _Overlay:
+            def __enter__(self_):
+                self_.saved = (ctx.classes, ctx.by_package, ctx.struct_owner, ctx.enum_owner,
+                               ctx.struct_owners, ctx.enum_owners, ctx._effective)
+                ctx.classes, ctx.by_package = dict(ctx.classes), dict(ctx.by_package)
+                ctx.struct_owner, ctx.enum_owner = dict(ctx.struct_owner), dict(ctx.enum_owner)
+                ctx.struct_owners = {k: list(v) for k, v in ctx.struct_owners.items()}
+                ctx.enum_owners = {k: list(v) for k, v in ctx.enum_owners.items()}
+                ctx._effective = {}
+                pkg = package.lower()
+                names = [(v.get("name") or "").lower() for v in views]
+                for low in names:
+                    old = ctx.by_package.pop((pkg, low), None)
+                    if ctx.classes.get(low) is not None and ctx.classes[low].package.lower() == pkg:
+                        del ctx.classes[low]
+                    if old is not None:
+                        for d in (ctx.struct_owners, ctx.enum_owners):
+                            for k in d:
+                                d[k] = [i for i in d[k] if i is not old]
+                for v in views:
+                    ctx.add_view(package, v)
+                for low in names:
+                    info = ctx.by_package.get((pkg, low))
+                    if info is not None:
+                        ctx.classes[low] = info
+                return ctx
+
+            def __exit__(self_, *exc):
+                (ctx.classes, ctx.by_package, ctx.struct_owner, ctx.enum_owner,
+                 ctx.struct_owners, ctx.enum_owners, ctx._effective) = self_.saved
+        return _Overlay()
+
     def only(self, packages):
         """A context manager limiting lookups to these packages."""
         ctx = self

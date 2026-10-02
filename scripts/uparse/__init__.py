@@ -294,20 +294,43 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
         def read(rel, extra=extra):
             v = extra.get(rel.replace("\\", "/").lower())
             return None if v is None else _decode_text(v)
-        for name, src in files.items():
-            if not name.lower().endswith(".uc"):
-                continue
-            a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read)
-            if a.hang_line is not None:
-                return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
-            if a.error is not None and first_error is None:
-                first_error = a.error
-            if sum(1 for k in files if k.lower().endswith(".uc")) == 1:
-                defaults = a.defaults
-            all_ok = all_ok and a.compiled
+        with ctx.overlay(pkg, _source_views(files, read)):
+            for name, src in files.items():
+                if not name.lower().endswith(".uc"):
+                    continue
+                a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read)
+                if a.hang_line is not None:
+                    return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
+                if a.error is not None and first_error is None:
+                    first_error = a.error
+                if sum(1 for k in files if k.lower().endswith(".uc")) == 1:
+                    defaults = a.defaults
+                all_ok = all_ok and a.compiled
     if first_error:
         return Prediction("error", [first_error])
     return Prediction("ok" if all_ok else "unknown", defaults=defaults)
+
+
+def _source_views(files: dict, read) -> list[dict]:
+    """Declaration views of a package's classes, for the others to see."""
+    from .importer import import_class, expand_includes
+    from .lexer import tokenize, LexError
+    from .decl import parse_declarations, DeclError
+    from pathlib import Path
+    views = []
+    for name, src in files.items():
+        if not name.lower().endswith(".uc"):
+            continue
+        try:
+            im = import_class(src)
+            if im.hang_line is not None:
+                continue
+            view = parse_declarations(tokenize(expand_includes(im.script_text(), read)), Path(name).stem)
+        except (LexError, DeclError):
+            continue
+        if view.get("name"):
+            views.append(view)
+    return views
 
 
 def _decode_text(b: bytes) -> str:
