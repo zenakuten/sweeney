@@ -175,6 +175,35 @@ read it for intent and issue the commands yourself.
   `../System/*.u` *before* `../Textures/*.utx`, so a leftover `.u` silently shadows the
   `.utx` that shipped. `mv MyPkg.u ../Textures/MyPkg.utx`.
 
+## Releasing under a new package name
+
+Every rebuild gets a new package GUID, and a client that already has a different build
+of the same package name fails to join. That's why mods that ship more than once put
+the version in the package name (`MyMod_V30`). The package name is the source folder's
+name, but the source also refers to its own objects by path, and those must be renamed
+to match. Renaming the text naively breaks the things that must stay the same:
+
+| Renamed | Kept |
+|---|---|
+| `class'MyMod.Foo'`, `Texture'MyMod.Tex.X'` | `config(MyMod)` -- the ini file name; rename it and every player's settings reset |
+| `"MyMod.FooPickup"`, `DynamicLoadObject("MyMod.Foo", ...)` | display strings: `GameName="MyMod Clan Arena"`, URLs, key-bind labels |
+| `ScoreBoardType=MyMod.Foo` in defaultproperties | |
+| `#exec ... PACKAGE=MyMod`, `EditPackages=MyMod` | |
+
+The rule that separates them: **rename the name only where it is a package qualifier**,
+meaning followed by `.` and an object name, or the value of `PACKAGE=` / `EditPackages=`.
+A wrong `config()` name is not an error. The game runs, reads a fresh ini and saves
+there, so a test passes while every setting has quietly reset.
+
+```bash
+python3 <sweeney>/scripts/uscript_rename.py MyMod MyMod MyMod_V30 [--dry-run]
+python3 <sweeney>/scripts/uscript_rename.py MyAddon MyAddon MyAddon_V30 --also MyMod=MyMod_V30
+```
+
+It copies the tree beside the source and applies that rule to `.uc`/`.uci` (comments are
+left alone), `.ini` and `.int`. Then it lists every use of the old name it left alone,
+for you to read over. `--also` renames references to a dependency released alongside.
+
 ## Other things that fail silently
 
 - **`var config` does nothing without `config(Name)` on the class declaration.**

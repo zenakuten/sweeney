@@ -68,6 +68,12 @@ This builds a throwaway package one construct at a time against *your* install a
 reports ok / error / hang, so compiler behaviour is measured rather than inherited as
 folklore. It restores the install afterwards.
 
+**`scripts/uscript_rename.py`** — copies a mod's source under a new package name for a
+versioned release (`MyMod` → `MyMod_V30`). It renames the name only where it's a package
+path (`class'MyMod.Foo'`, `"MyMod.FooPickup"`, `PACKAGE=MyMod`) and leaves
+`config(MyMod)` and display text alone, so player ini files carry over between releases.
+It needs no per-mod list of special cases, and it reports every use it left alone.
+
 ## Skills
 
 | | |
