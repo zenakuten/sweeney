@@ -16,6 +16,8 @@ Sections, each a set of agreement rates in [0, 1]:
            compiled class, by field names and kinds ("names") and in full ("full")
   seeds    seeds.json, UCC's verdict on every corpus class built alone: same outcome,
            first error line and message
+  mutants  mutants.json, seeds with one edit inside a function body and UCC's verdict:
+           same outcome, first error line and message
   packages each local mod predicted as one build (every class, its includes, the
            deps its seeds needed); they all compile, so the answer should be "ok"
 
@@ -52,7 +54,7 @@ from sandbox import default_root, sweeney_config  # noqa: E402
 REPO_SCORE = REPO / "tests" / "uparse" / "score.json"
 LOCAL_SCORE = default_root() / "score-local.json"
 LOCAL_CORPUS = default_root() / "corpus-local.txt"
-SECTIONS = ("probes", "hang", "corpus", "decl", "seeds", "packages")
+SECTIONS = ("probes", "hang", "corpus", "decl", "seeds", "mutants", "packages")
 
 # Metrics only reproducible on this machine (local mods, seeds) carry this mark and
 # stay out of the repo ratchet.
@@ -311,6 +313,22 @@ def score_seeds(t: Tally) -> None:
         compare_outcome(t, "seeds", f"{it['package']}/{src.name}", len(seed_src), ucc, pred)
 
 
+def score_mutants(t: Tally) -> None:
+    manifest = default_root() / "mutants.json"
+    if not manifest.exists():
+        return
+    from mutants import seed_source, apply
+    for it in json.loads(manifest.read_text()):
+        if it.get("outcome") not in ("ok", "error", "hang") or not Path(it["source"]).exists():
+            continue
+        fname, src = seed_source(it)
+        msrc = apply(src, it["edit"])
+        ucc = {"outcome": it["outcome"], "errors": [_seed_error(e) for e in it.get("errors", [])]}
+        pred = uparse.predict({"Probe": {fname: msrc}}, it.get("deps", []))
+        compare_outcome(t, "mutants", f"{it['package']}/{Path(it['source']).name}:{it['edit']['op']}",
+                        len(msrc), ucc, pred)
+
+
 def score_packages(t: Tally) -> None:
     deps: dict[str, list] = {}
     manifest = default_root() / "seeds.json"
@@ -349,7 +367,7 @@ def flatten(rates: dict) -> dict[str, float]:
 
 
 def is_local(metric: str) -> bool:
-    return metric.startswith(("seeds.", "hang.seeds.")) or f".{LOCAL}" in metric
+    return metric.startswith(("seeds.", "hang.seeds.", "mutants.", "hang.mutants.")) or f".{LOCAL}" in metric
 
 
 def drops(current: dict[str, float], ratchet: dict[str, float]) -> list[str]:
@@ -388,6 +406,8 @@ def main() -> int:
         score_decl(t, local_packages(), LOCAL)
     if "seeds" in only or "hang" in only:
         score_seeds(t)
+    if "mutants" in only:
+        score_mutants(t)
     if "packages" in only:
         score_packages(t)
     secs = time.monotonic() - t0

@@ -561,8 +561,9 @@ class Body:
     """Compiles one function body (or state code) from its tokens."""
 
     def __init__(self, tokens: list[Token], scope: Scope, static: bool, kind: str,
-                 eof_line: int):
+                 eof_line: int, close: Token | None = None):
         self.t = tokens
+        self.close = close            # the '}' after the body: what UCC reads next at its end
         self.i = 0
         self.s = scope
         self.ts = scope.ts
@@ -693,9 +694,11 @@ class Body:
                 raise self.error("'Class' is not allowed here")
             self.expr_required(sw["type"], "'Case'")
             self.require(":", "'Case'")
+            sw["cased"] = True
             need_semicolon = False
         elif w == "default" and self._find_nest("switch") is not None and self.at(":"):
             self.next()
+            self._find_nest("switch")["cased"] = True
             need_semicolon = False
         elif w == "return":
             if self.kind != "function":
@@ -704,7 +707,8 @@ class Body:
             if ret is not None:
                 self.expr_required(ret.drop("out"), "'Return'")
         elif w in ("break", "continue"):
-            pass
+            if w not in self._allowed():
+                raise self.error(f"'{w.capitalize()}' is not allowed here")
         elif w == "goto":
             if self.kind == "state":
                 self.expr_required(T("name"), "'Goto'")
@@ -739,6 +743,8 @@ class Body:
             nxt = self.next()
             if nxt is not None:
                 raise CompileError(f"Missing ';' before '{nxt.text}'", nxt.line)
+            if self.close is not None:
+                raise CompileError(f"Missing ';' before '{self.close.text}'", self.close.line)
             raise CompileError("Missing ';'", self.eof_line)
 
     def block_or_statement(self, kind: str) -> None:
@@ -776,6 +782,26 @@ class Body:
                 raise self.error("The loop syntax is do...until, not do...while")
             else:
                 raise Unsupported("do without until")
+
+    def _allowed(self) -> set:
+        """UCC's ALLOW_ flags at this point, as PushNest computes them: a loop grants
+        break and continue; a switch only case and default, then statements and break
+        once a case is seen (so `continue` straight inside a switch is refused); an if
+        passes its parent's on. Braces push nothing."""
+        a = {"return", "cmd", "label"} if self.kind == "function" else {"cmd", "label", "statecmd"}
+        for n in self.nests:
+            k = n["kind"]
+            if k in ("if", "else"):
+                a = {"elseif"} | (a & {"cmd", "label", "break", "continue", "statecmd", "return"})
+            elif k in ("while", "do", "for"):
+                a = {"break", "continue"} | (a & {"cmd", "label", "statecmd", "return"})
+            elif k == "foreach":
+                a = {"iterator", "break", "continue"} | (a & {"cmd", "label", "return"})
+            elif k == "switch":
+                a = {"case", "default"} | (a & {"statecmd", "return"})
+                if n.get("cased"):
+                    a |= {"cmd", "label", "break"}
+        return a
 
     def _find_nest(self, kind: str):
         for n in reversed(self.nests):
@@ -1405,6 +1431,10 @@ class Body:
                 tok = tok.with_(dim=1)
             elif tok.kind == "struct" and self.at("."):
                 self.next()
+                m = self.peek()
+                if m is not None and m.kind != IDENT:
+                    raise CompileError(f"Unknown member '{self._member_text()}' in struct "
+                                       f"'{(tok.struct or '').split('.')[-1]}'", m.line)
                 m = self.next()
                 members = self.s.struct_members(tok.struct or "")
                 if members is None:
@@ -1429,6 +1459,9 @@ class Body:
                 m = self.peek()
                 if tok.cls is None:
                     raise Unsupported("context on None")
+                if m is not None and m.kind != IDENT:
+                    raise CompileError(f"Unrecognized member '{self._member_text()}' in class "
+                                       f"'{tok.cls.split('.')[-1]}'", m.line)
                 r = self.field_expr(tok.cls, required, is_self=False, concrete=True)
                 if r.kind == "none" and not self.got_affector:
                     if m is not None and m.kind == IDENT and self.s.find(m.text, None, tok.cls, False) is None:
@@ -1441,6 +1474,16 @@ class Body:
                 tok = r
             else:
                 return tok
+
+    def _member_text(self) -> str:
+        """The token UCC reads where a member name should be. Reading an operand, a
+        sign touching a digit is part of the number: C.-5 names a member '-5'."""
+        m = self.peek()
+        n = self.peek(1)
+        if m.kind == SYMBOL and m.text in ("-", "+") and n is not None and \
+                n.kind in (INT, FLOAT) and n.start == m.end:
+            return m.text + n.text
+        return m.text
 
     # operators ----------------------------------------------------------------
 
@@ -1536,8 +1579,10 @@ def compile_bodies(view_raw_tokens, body_spans, own_view: dict, ctx, package: st
         scope = Scope(ts, ctx, own_view, func, state)
         scope.body_consts.update(shared_consts)
         static = func is not None and "static" in (func.get("flags") or [])
+        close = view_raw_tokens[end] if kind != "replication" and end < len(view_raw_tokens) \
+            and view_raw_tokens[end].text == "}" else None
         b = Body(view_raw_tokens[start:end], scope, static,
-                 "function" if kind == "replication" else kind, eof_line)
+                 "function" if kind == "replication" else kind, eof_line, close)
         try:
             if kind == "replication":
                 b.compile_condition()
