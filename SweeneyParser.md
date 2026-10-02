@@ -242,6 +242,14 @@ and diff against what we predict. Every place where we predict a value but UCC s
 the inherited one is a **silent discard**, and that list is the product.
 *Target:* predicted defaults equal serialized defaults across every corpus package.
 
+*Known so far:* defaults have to be decoded by type, not by trusting each tag's size
+field. In 2 of ~5000 classes a struct or array value's tag size is smaller than its
+data: `XInterface.HudBCaptureTheFlag` (`NewFlagWidgets`, Epic's own build) and
+`WSUTComp.UTComp_Menu_Crosshairs` (`UTCompNewHairs`, the 3374 UCC). Struct values
+are nested tagged lists with their own terminator, so a type-aware reader doesn't
+need the size. Those two are P6's first test cases. `reflect.py` flags them as
+`defaults_desync` and keeps their declarations.
+
 **P7: Ship.**
 - `uparse check` emits diagnostics in UCC's format, so existing error parsing works.
 - `uccheck.py` gains the type-aware checks.
@@ -272,7 +280,7 @@ Agent roles, each a prompt plus a scope:
 | probe author | `tests/uparse/probes/` | compiler source (locally), language docs, UCC results |
 | generator | `tools/uparse_oracle/mutate.py` | grammar, divergence report |
 | fixer | one or two `scripts/uparse/*.py` modules | its cluster, probes |
-| oracle maintainer | `reflect.py`, `bytecode.py` | package format docs, `ue2.py` |
+| oracle maintainer | `reflect.py` | UELib (MIT), `ue2.py` |
 | reviewer | nothing, rejects merges | diff, scoreboard, the C++ rule |
 
 Guards for unattended running:
@@ -302,8 +310,9 @@ Guards for unattended running:
 ## Prior art to check in P0
 
 - Eliot Van Uytfanghe's UnrealScript language server / UELib (VS Code extension, ANTLR
-  grammar, UE1–3). Good for navigation. UELib also documents the UE2 bytecode format,
-  which oracle 4 needs. Check its licence before borrowing anything.
+  grammar, UE1–3). Good for navigation. UELib (github.com/EliotVU/Unreal-Library, MIT)
+  is where `reflect.py` takes its object and bytecode layouts from. Every layout is
+  checked by the reader consuming exactly each export's recorded size.
 - tree-sitter UnrealScript grammars, for highlighting only.
 - `scripts/uccheck.py` and `scripts/ucc-probe.sh`: the measured traps and the probe
   pattern this generalises. `ucc-probe.sh` is effectively a 1-sandbox, hand-written
@@ -315,6 +324,40 @@ Guards for unattended running:
 2. ~~Build `sandbox.py` and time a single probe build.~~ Done: ~1s per build, ~800/min
    in parallel.
 3. ~~Run the seed finder over the engine corpus and WSUTComp.~~ Done: 2986 seeds.
-4. Extend `ue2.py` into `reflect.py` far enough to dump one compiled class's properties
-   and functions, and diff it by hand against its `.uc`.
+4. ~~Extend `ue2.py` into `reflect.py` far enough to dump one compiled class's
+   properties and functions, and diff it by hand against its `.uc`.~~ Done; see
+   *Oracle 3* below.
 5. Stand up `score.py` on an empty parser and commit the baseline.
+
+## Oracle 3: `reflect.py`
+
+`tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,
+functions, structs, enums, consts, every property type, and the class defaults (raw
+for now). It also decodes function bodies into a token tree, which UE2 forces: a body's
+size on disk isn't recorded, because the object and name references inside it are
+compact indices, so the only way past a body is to decode it. That makes oracle 4's
+decoder mostly done already.
+
+`reflect.py --verify` checks that every object parses to exactly its recorded size. On
+this install it passes for **97,333 script objects in 67 packages**, with every function
+body decoded, in about 2 seconds. Building it also fixed a bug in `ue2.py`, shared with
+uttexture: a tagged property's array index has its own 1/2/4-byte encoding and isn't a
+compact index. The two agree below 64, which is why texture work never hit it.
+
+A hand diff of a probe class against its source shows what the declaration pass has to
+reproduce, all measured:
+
+- `Children` lists fields in **reverse** declaration order.
+- Names keep the **first spelling the package saw**: `Sum` came out as `sum`, because
+  that spelling was already in the name table. The diff must ignore case.
+- The replication block adds flags after the fact: a replicated var gains `net` and a
+  `rep_offset`, and a replicated function gains `net netreliable`.
+- A `const` stores its raw text, leading space included (`MaxItems` gives `' 8'`).
+- `var()` with no category gets the class name as its category.
+- A delegate adds a hidden `DelegateProperty` named `__<Name>__Delegate`.
+- `string` vars and parms carry `needctorlink`, and a return value is `parm out return`.
+- Defaults store only values that differ from the parent's; `bOn=False` is absent.
+
+UCC rules the probe hit along the way, for the error catalogue:
+`After an optional parameters, all other parmeters must be optional` (UCC's own
+spelling), and `Unexpected 'reliable'` for the UE3-style `reliable client function`.
