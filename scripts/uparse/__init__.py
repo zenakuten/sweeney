@@ -39,6 +39,7 @@ class Analysis:
     error: Diag | None = None       # the first error UCC would report, if any
     view: dict | None = None        # the resolved declarations (when it parses)
     defaults: dict | None = None    # what UCC would store for the class's defaults
+    compiled: bool = False          # every stage modelled and clean: UCC would compile it
 
 
 def analyze(name: str, src: bytes, package: str | None = None, context=None,
@@ -72,6 +73,9 @@ def _analyze(name, src, package, context, path) -> Analysis:
                                             f"'{im.base_name}'/{n}/{n}"))
     if im.class_name.lower() != stem.lower():
         return Analysis(error=Diag(name, 0, f"Script vs. class name mismatch ({stem}/{im.class_name})"))
+    if any(d.strip() == "" for d in im.dependson):
+        # dependson() makes an empty name, and UCC crashes on it.
+        return Analysis(error=Diag(name, 0, "General protection fault!"))
 
     text = im.script_text()
     if path is not None:
@@ -105,6 +109,7 @@ def _analyze(name, src, package, context, path) -> Analysis:
         pos, line, msg = min(candidates, key=lambda c: c[0])
         return Analysis(error=Diag(name, line, msg))
     resolved = resolve_class(view, package, ctx, text)
+    resolved["_rep_conditions"] = view.get("_rep_conditions", [])
 
     # defaultproperties: imported after everything compiles. Errors there carry no
     # line (0), and UCC's output shows the last line logged.
@@ -114,13 +119,47 @@ def _analyze(name, src, package, context, path) -> Analysis:
     if lit is not None:
         return Analysis(error=lit, view=resolved)
 
+    # Function bodies and state code (pass 2).
+    from .body import compile_bodies, Unsupported
+    bodies_ok = True
+    try:
+        err = compile_bodies(tokens, _body_spans(resolved), resolved, ctx, package, eof_line)
+    except (Unsupported, RecursionError):
+        err, bodies_ok = None, False
+    except Exception:
+        err, bodies_ok = None, False
+    if err is not None:
+        return Analysis(error=Diag(name, err.line, err.message), view=resolved)
+
     from .defaults import predict_defaults
     stored, logged, failed = predict_defaults(_with_inner(resolved), [t for _, t in im.defaults],
                                               package, ctx, _stock_packages(ctx),
                                               has_exec="#exec" in text.lower())
     if failed and logged:
         return Analysis(error=Diag(name, 0, logged[-1]), view=resolved)
-    return Analysis(view=resolved, defaults=stored)
+    # A 64-character identifier gets through the lexer (65 doesn't) but can't be made
+    # a name: "Unhashed name '<63 characters>'", once everything else is done.
+    for t in tokens:
+        if t.kind == "ident" and len(t.text) >= 64:
+            return Analysis(error=Diag(name, 0, f"Unhashed name '{t.text[:63]}'"), view=resolved)
+    return Analysis(view=resolved, defaults=stored, compiled=bodies_ok and stored is not None)
+
+
+def _body_spans(view: dict) -> list:
+    """(function field, state field, start, end, kind) for every body in source order."""
+    spans = []
+    for f in view["fields"]:
+        if f["kind"] == "Function" and f.get("_body"):
+            spans.append((f, None, f["_body"][0], f["_body"][1], "function"))
+        elif f["kind"] == "State":
+            for g in f.get("fields", []):
+                if g["kind"] == "Function" and g.get("_body"):
+                    spans.append((g, f, g["_body"][0], g["_body"][1], "function"))
+            if f.get("_code"):
+                spans.append((None, f, f["_code"][0], f["_code"][1], "state"))
+    for start, end in view.get("_rep_conditions", []):
+        spans.append((None, None, start, end, "replication"))
+    return sorted(spans, key=lambda s: s[2])
 
 
 def _object_literal_error(tokens, ctx, package: str, name: str) -> "Diag | None":
@@ -207,25 +246,28 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     from .context import default_context
     first_error = None
     defaults = None
-    visible = _stock_packages(default_context()) + list(deps or []) + list(packages)
+    all_ok = True
+    ctx = default_context(prefer_compiled=True)
+    visible = _stock_packages(ctx) + list(deps or []) + list(packages)
     for pkg, files in packages.items():
         for name, src in files.items():
-            a = analyze(name, src, package=pkg, visible=visible)
+            a = analyze(name, src, package=pkg, context=ctx, visible=visible)
             if a.hang_line is not None:
                 return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
             if a.error is not None and first_error is None:
                 first_error = a.error
             if len(files) == 1:
                 defaults = a.defaults
+            all_ok = all_ok and a.compiled
     if first_error:
         return Prediction("error", [first_error])
-    return Prediction("unknown", defaults=defaults)
+    return Prediction("ok" if all_ok else "unknown", defaults=defaults)
 
 
-def check_file(name: str, src: bytes) -> list[Diag] | None:
+def check_file(name: str, src: bytes, path=None) -> list[Diag] | None:
     """Syntax-level diagnostics for one file. [] means nothing found at the stages
     implemented so far (importer, lexer, declarations); None means don't know."""
-    a = analyze(name, src)
+    a = analyze(name, src, path=path)
     if a.hang_line is not None:
         return [Diag(name, a.hang_line, HANG_MESSAGE)]
     return [a.error] if a.error else []

@@ -206,7 +206,7 @@ def score_corpus(t: Tally, packages, label: str) -> None:
     seeds = _seed_errors()
     for pkg, files in packages:
         for f in files:
-            diags = uparse.check_file(f.name, f.read_bytes())
+            diags = uparse.check_file(f.name, f.read_bytes(), path=f)
             clean = diags == []
             ucc = seeds.get(str(f))
             if not clean and diags and ucc and \

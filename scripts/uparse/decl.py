@@ -191,6 +191,7 @@ class DeclParser:
         self.header: dict = {}
         self.replicated: dict[str, bool] = {}    # name -> reliable
         self.replicated_at: list[tuple[str, int, int]] = []   # (name, line, pos)
+        self.rep_conditions: list[tuple[int, int]] = []
         self.error: DeclError | None = None
 
     # ------------------------------------------------------------ top level
@@ -210,6 +211,7 @@ class DeclParser:
                 "class_flags": self.header.get("class_flags", []),
                 "config": self.header.get("config"), "within": self.header.get("within"),
                 "fields": self.fields, "_replicated_at": self.replicated_at,
+                "_rep_conditions": self.rep_conditions,
                 "_header_line": self.header.get("_line")}
 
     def _parse_one(self) -> None:
@@ -235,7 +237,10 @@ class DeclParser:
             self._check_dup(self._struct(), "Struct", "struct")
             c.expect(";")
         elif w == "const":
-            self.fields.append(self._const())
+            k = self._const()
+            if any(g["kind"] == "Const" and g["name"].lower() == k["name"].lower() for g in self.fields):
+                k["_duplicate"] = True       # UCC crashes on this (resolve.py words it)
+            self.fields.append(k)
         elif w == "replication":
             self._replication()
         elif c.at(";"):
@@ -636,7 +641,9 @@ class DeclParser:
             else:
                 raise c.error("Missing 'Reliable' or 'Unreliable'")
             c.expect("if")
+            open_at = c.i
             c.skip_group("(", ")")
+            self.rep_conditions.append((open_at + 1, c.i))   # after '(' .. through ')'
             while True:
                 tok = c.ident("variable name")
                 self.replicated[tok.text.lower()] = reliable
@@ -690,6 +697,7 @@ class DeclParser:
         c.expect("{")
         c.blocks.append("State")
         fields: list[dict] = []
+        state_code = None
         while not c.at("}"):
             w = c.at_word()
             if c.peek() is None:
@@ -717,7 +725,9 @@ class DeclParser:
                 raise c.error(f"'{DECL_KEYWORDS[w]}' is not allowed here")
             elif self._label_ahead():
                 # State code: labels and statements to the end of the state.
+                code_start = c.i
                 self._skip_state_code()
+                state_code = (code_start, c.i)
                 break
             else:
                 fns = self._function(in_state=True)
@@ -730,6 +740,8 @@ class DeclParser:
         c.blocks.pop()
         sflags = [f for f in ("editable", "auto", "simulated") if f in flags]
         st = _field(name, "State", state_flags=sflags, super=sup, fields=fields)
+        if state_code is not None:
+            st["_code"] = state_code
         if sup_tok is not None:
             st["_super_line"], st["_super_tpos"] = sup_tok.line, c.t.index(sup_tok)
         return _mark(st, tok, pos)
@@ -876,12 +888,15 @@ class DeclParser:
 
         locals_: list[dict] = []
         defined = False
+        body_span = None
         if c.at("{"):
             if "native" in flags:
                 raise c.error("Native functions may only be declared, not defined")
             defined = True
             c.blocks.append("Function")
+            body_start = c.i + 1
             locals_ = self._body_locals(extra, parms)
+            body_span = (body_start, c.i - 1)       # tokens between the braces
             c.blocks.pop()
         else:
             c.expect(";")
@@ -908,6 +923,9 @@ class DeclParser:
         fn["native"], fn["precedence"] = native_index, precedence
         fn["_kind_word"] = kind_word
         fn["_ret"] = ret
+        fn["_friendly"] = name_tok.text      # what an operator is written as
+        if body_span is not None:
+            fn["_body"] = body_span
         _mark(fn, name_tok, name_pos)
         out = [fn] + extra
         if kind_word == "delegate":

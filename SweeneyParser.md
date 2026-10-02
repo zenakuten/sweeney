@@ -591,6 +591,46 @@ class UCC accepts. The corpus metric counts a predicted error as agreement when 
 seed run recorded UCC rejecting that file with the same message (three engine dump
 files have broken `defaultproperties`).
 
+## P4/P5: function bodies (first stage)
+
+`scripts/uparse/body.py` compiles function bodies, state code and replication
+conditions with UCC's type-driven semantics. Each expression is compiled against the
+type its context requires. Operators are found by the symbol they're written with
+among every visible operator function, and the overload is chosen by conversion cost
+using UCC's conversion table. Mismatches give UCC's messages (`Type mismatch in '='`,
+`Call to 'F': bad or missing parameter 2`, `'?': Expression has no effect`, ...).
+Anything it doesn't model raises `Unsupported`, and the prediction is "don't know",
+never a guess. With every stage clean and modelled, `predict` now says **ok**.
+
+Found while getting it right:
+- **An object literal's type is its object's real class.** `Material'xbiosplat'` is
+  a Texture, so it fits a Texture variable.
+- **Intrinsic classes** (`Class`, `Font`) have no recorded parent but still inherit
+  `Object`'s members (`damageType.Name`).
+- **Enum casts find any loaded enum** (`EInputKey(Key)` from `Interactions`). Several
+  packages may declare the same enum, so the first in load order wins.
+- **`Class.Struct` names the declaring class outright**, even when the class being
+  compiled has its own struct of that name.
+- **The prediction context is compiled-first.** For a build, dependencies come from
+  the compiled packages UCC loads (the engine source is a v3369 dump; the install is
+  3374). The declaration and corpus checks still index source first.
+- **Two UCC crashes are now predicted as the messages they print**: a duplicate
+  `const` (the call stack, with one `MakeScript` per class in the hierarchy) and an
+  empty `dependson()` (`General protection fault!`). A 64-character identifier gives
+  `Unhashed name`.
+
+**Scoreboard:** no wrong outcome predicted anywhere (probes, seeds, corpus).
+
+| | before | now |
+|---|---|---|
+| probe outcomes | 199/604 | **603/604** |
+| probe errors, exact line and message | 170/194 | **194/194** |
+| seed classes UCC accepts, predicted ok | 0/2986 | 1663/2986 |
+| seed classes UCC rejects, predicted error | 241/507 | 361/507 (301 exact) |
+
+The rest is "don't know": constructs `body.py` doesn't model yet (`new`,
+`super(Class)`, named consts in expressions, private/protected access, ...).
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,

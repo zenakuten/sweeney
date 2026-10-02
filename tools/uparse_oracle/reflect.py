@@ -507,6 +507,14 @@ def _field_view(pkg: Package, objects: dict, f: dict) -> dict:
         v["fields"] = [_field_view(pkg, objects, g) for g in fields_of(pkg, objects, f["children"])]
         if f.get("script_size"):
             v["script_size"] = f["script_size"]
+    if f["kind"] == "ArrayProperty" and f.get("inner"):
+        inner = objects.get(f["inner"])
+        if inner is not None:
+            v["_inner"] = _field_view(pkg, objects, inner)
+    if f["kind"] == "Function" and f.get("friendly_name"):
+        # The name an operator is written with ('+', '!=', 'Dot'); private, so the
+        # declaration diff ignores it.
+        v["_friendly"] = f["friendly_name"]
     return v
 
 

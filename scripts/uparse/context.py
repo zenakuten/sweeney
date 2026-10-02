@@ -37,6 +37,7 @@ class ClassInfo:
         self.consts: dict[str, list[str]] = {}    # lower const name -> value tokens
         self.state_ext: dict[str, str] = {}       # lower state -> the state it extends
         self.vars: set[str] = set()
+        self.state_function_defs: dict[str, dict[str, dict]] = {}
         self.var_defs: dict[str, dict] = {}       # lower property name -> field
         self.enum_values: dict[str, list[str]] = {}
 
@@ -65,6 +66,8 @@ class Context:
         self._effective: dict[str, dict] = {}
         self._exports: dict[str, dict | None] = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
+        self.struct_owners: dict[str, list] = {}  # every class declaring a struct of that name
+        self.enum_owners: dict[str, list] = {}
         self.visible: set[str] | None = None      # packages loaded in this build, if known
         self._imports_cache: dict[str, list[str]] = {}
 
@@ -131,6 +134,8 @@ class Context:
         name = view.get("name") or ""
         if not name:
             return
+        if (package.lower(), name.lower()) in self.by_package:
+            return                        # already known (compiled first): keep that view
         sup = (view.get("super") or "").split(".")[-1] or None
         info = ClassInfo(name, package, sup)
         info.config = view.get("config")
@@ -140,12 +145,14 @@ class Context:
             low = f["name"].lower()
             if f["kind"] == "Struct":
                 info.structs[low] = f["name"]
+                self.struct_owners.setdefault(low, []).append(info)
                 info.struct_fields[low] = f.get("fields", [])
                 info.struct_defs[low] = f
 
                 self.struct_owner.setdefault(low, name.lower())
             elif f["kind"] == "Enum":
                 info.enums[low] = f["name"]
+                self.enum_owners.setdefault(low, []).append(info)
                 info.enum_values[low] = list(f.get("values", []))
                 self.enum_owner.setdefault(low, name.lower())
             elif f["kind"] == "Function":
@@ -166,6 +173,9 @@ class Context:
                 info.states[low] = {g["name"].lower(): g["name"] for g in f.get("fields", [])
                                     if g["kind"] == "Function" and not
                                     (g.get("_ignored") and g["name"].lower() in PROBE_NAMES)}
+                info.state_function_defs[low] = {
+                    g["name"].lower(): g for g in f.get("fields", [])
+                    if g["kind"] == "Function" and not g.get("_ignored")}
                 if f.get("super"):
                     # Source: the `extends` name. Compiled: a path, whose last part is
                     # the parent state (a same-named state in the parent class counts).
@@ -260,6 +270,19 @@ class Context:
         if low not in self.classes:
             self._load_compiled()
         return self.classes.get(low)
+
+    def _load_rank(self) -> dict:
+        """{package: position} in the stock EditPackages list (Default.ini)."""
+        if getattr(self, "_rank", None) is None:
+            inst = Path(self.compiled_root or _config().get("install_root") or "")
+            try:
+                text = (inst / "System" / "Default.ini").read_text(encoding="latin-1")
+                pk = [l.split("=", 1)[1].strip().lower() for l in text.splitlines()
+                      if l.strip().lower().startswith("editpackages=")]
+            except OSError:
+                pk = []
+            self._rank = {p: i for i, p in enumerate(pk)}
+        return self._rank
 
     def only(self, packages):
         """A context manager limiting lookups to these packages."""
@@ -491,33 +514,61 @@ class Context:
                     return "struct", f"{info.path()}.{info.structs[low]}"
                 if low in info.enums:
                     return "enum", f"{info.path()}.{info.enums[low]}"
+        if qualified:
+            # Class.Struct / Class.Enum names the declaring class outright
+            # (ONSPowerlinkOfficialSetupSupplement.TPowernodeSettings), even when the
+            # class being compiled has its own struct of that name.
+            parts = word.split(".")
+            if len(parts) == 2:
+                owner = self.info(parts[0], own["package"] if own is not None else None)
+                if owner is not None:
+                    if low in owner.structs:
+                        return "struct", f"{owner.path()}.{owner.structs[low]}"
+                    if low in owner.enums:
+                        return "enum", f"{owner.path()}.{owner.enums[low]}"
+                if own is not None and parts[0].lower() == own["name"].lower():
+                    for f in own["fields"]:
+                        if f["name"].lower() == low and f["kind"] in ("Struct", "Enum"):
+                            kind = "struct" if f["kind"] == "Struct" else "enum"
+                            return kind, f"{own['package']}.{own['name']}.{f['name']}"
         if own is not None and low == own["name"].lower():
             return "class", f"{own['package']}.{own['name']}"
         target = self.info(word, own["package"] if own is not None else None)
         if target is not None:
             return "class", target.path()
         self._load_compiled()
-        for owners, kind in ((self.struct_owner, "struct"), (self.enum_owner, "enum")):
-            if low in owners:
-                info = self.classes[owners[low]]
-                if self.visible is not None and info.package.lower() not in self.visible:
-                    continue
+        rank = self._load_rank()
+        for owners, kind in ((self.struct_owners, "struct"), (self.enum_owners, "enum")):
+            # Any loaded class's struct or enum of that name; several packages may
+            # declare one, so take the first in load order (stock packages first).
+            cands = [i for i in owners.get(low, [])
+                     if self.visible is None or i.package.lower() in self.visible]
+            cands.sort(key=lambda i: rank.get(i.package.lower(), len(rank)))
+            for info in cands:
                 table = info.structs if kind == "struct" else info.enums
-                return kind, f"{info.path()}.{table[low]}"
+                if low in table:
+                    return kind, f"{info.path()}.{table[low]}"
         return None
 
 
 _DEFAULTS: dict = {}
 
 
-def default_context(compiled_root: Path | None = None) -> Context:
+def default_context(compiled_root: Path | None = None, prefer_compiled: bool = False) -> Context:
     """The engine checkout and the local corpus, from ~/.sweeney/config.json, with
     other classes read from the compiled packages under `compiled_root` (default:
-    the install). Cached per root."""
-    key = str(compiled_root or "")
+    the install). Cached per root.
+
+    With `prefer_compiled`, a class that has a compiled package comes from it rather
+    than from source -- what UCC itself loads for a dependency, and the right view
+    for predicting a build (the engine source is a v3369 dump; the install's
+    packages may be 3374)."""
+    key = f"{compiled_root or ''}|{prefer_compiled}"
     if key in _DEFAULTS:
         return _DEFAULTS[key]
     ctx = Context(compiled_root)
+    if prefer_compiled:
+        ctx._load_compiled()
     eng = Path(_config().get("engine_source") or "")
     if eng.is_dir():
         for d in sorted(eng.iterdir()):

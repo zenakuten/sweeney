@@ -166,6 +166,7 @@ class _Resolver:
             return out
         if kind == "State":
             spath = f"{owner_path}.{f['name']}"
+            out_code = f.get("_code")
             fields = []
             for g in f.get("fields", []):
                 if g.get("_ignored"):
@@ -175,6 +176,8 @@ class _Resolver:
                     continue
                 fields.append(self.field(g, spath, state=f))
             out["fields"] = fields
+            if out_code is not None:
+                out["_code"] = out_code
             out.pop("super", None)
             sup = self._state_super(f)
             if sup:
@@ -183,6 +186,10 @@ class _Resolver:
         if kind == "Function":
             fpath = f"{owner_path}.{f['name']}"
             out["fields"] = [self.field(g, fpath) for g in f.get("fields", [])]
+            if f.get("_friendly"):
+                out["_friendly"] = f["_friendly"]
+            if f.get("_body"):
+                out["_body"] = f["_body"]
             sup = self._function_super(f["name"], state)
             if sup:
                 out["super"] = sup
@@ -437,6 +444,16 @@ def deferred_errors(view: dict, package: str, ctx: Context) -> list[tuple[int, i
 
     for f in view["fields"]:
         kind = f["kind"]
+        if kind == "Const" and f.get("_duplicate"):
+            # A duplicate const crashes UCC; its output is the call stack, with one
+            # MakeScript per class from Object down to this one.
+            depth = 1 + len(list(ctx.ancestry(sup)))
+            stack = ("FScriptCompiler::CompileConst <- Const <- FScriptCompiler::CompileDeclaration"
+                     " <- FScriptCompiler::CompileStatement <- FirstPass <- TryCompile <-"
+                     f" FScriptCompiler::CompileScript <- (Class {package}.{name}, Pass 0, Line {f.get('_line', 0)})"
+                     " <- " + "MakeScript <- " * depth +
+                     "DoScripts <- UEditorEngine::MakeScripts <- UMakeCommandlet::Main")
+            out.append((f.get("_tpos", 0), 0, stack))
         if kind.endswith("Property"):
             check_prop(f)
         elif kind == "Struct":
