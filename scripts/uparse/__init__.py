@@ -22,6 +22,11 @@ class Diag:
 class Prediction:
     outcome: str                # ok | error | hang | unknown
     errors: list[Diag] = dataclasses.field(default_factory=list)
+    # The class defaults UCC would store, in reflect.decode_defaults' shape:
+    # {property: {"array index": value}}, names as ["name", "Foo"], strings as
+    # ["str", "Foo"]. Only values that differ from the parent's are stored, and a
+    # value UCC silently discards is simply absent. None means don't know.
+    defaults: dict | None = None
 
 
 def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None) -> Prediction:

@@ -7,8 +7,9 @@ install (via reflect.py). Nothing here starts UCC.
 
 Sections, each a set of agreement rates in [0, 1]:
 
-  probes   tests/uparse/probes goldens: same outcome (ok/error/hang); and, over the
-           probes where UCC reported an error, the same first error line and message
+  probes   tests/uparse/probes goldens: same outcome (ok/error/hang); over the
+           probes where UCC reported an error, the same first error line and message;
+           and over the probes that compile, the same stored defaults
   hang     recall and precision of hang predictions, per source (probes, seeds)
   corpus   engine source files (and local mod files) that check_file() parses clean
   decl     engine classes (and local mod classes) whose declarations() match the
@@ -96,6 +97,12 @@ def compare_outcome(t: Tally, section: str, ident: str, size: int,
         got = pred.errors[0] if pred.errors else None
         t.add(f"{section}.line", bool(got) and got.line == want["line"])
         t.add(f"{section}.message", bool(got) and got.message == want["message"])
+    if ucc["outcome"] == "ok" and "defaults" in ucc:
+        # What UCC stored, silent discards included. Scored only where recorded.
+        t.add(f"{section}.defaults", pred.defaults == ucc["defaults"])
+        if pred.defaults != ucc["defaults"]:
+            kind = "unknown" if pred.defaults is None else "mismatch"
+            t.diverge(section, ("defaults", kind), (size, ident))
     if ucc["outcome"] == "hang":
         t.add(f"hang.{section}.recall", pred.outcome == "hang")
     if pred.outcome == "hang":

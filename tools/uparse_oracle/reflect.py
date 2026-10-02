@@ -360,13 +360,114 @@ def read_export(pkg: Package, i: int) -> dict:
 
 
 def _defaults(pkg: Package, r: Reader) -> dict:
-    """Class defaults as {name: [[array index, kind, hex bytes]]}, raw.
+    """Class defaults as {name: [[array index, kind, hex bytes, struct name]]}, raw.
 
-    Kept raw on purpose: decoding a value needs its property's type, and the diff
-    against the parser's prediction works on the same raw encoding.
+    decode_defaults() turns these into values; the raw form stays because decoding
+    an array needs its element type, which may live in another package.
     """
     props = _read_properties(pkg, r)
-    return {k: [[p.index, p.kind, p.raw.hex()] for p in v] for k, v in props.items()}
+    return {k: [[p.index, p.kind, p.raw.hex(), p.struct_name] for p in v]
+            for k, v in props.items()}
+
+
+# Tagged-property kinds (the low 4 bits of a tag's info byte).
+K_BYTE, K_INT, K_BOOL, K_FLOAT, K_OBJECT, K_NAME = 1, 2, 3, 4, 5, 6
+K_ARRAY, K_STRUCT, K_STR = 9, 10, 13
+
+# Structs stored as raw binary rather than as nested tagged properties.
+BINARY_STRUCTS = {
+    "vector": ("<3f", ("X", "Y", "Z")),
+    "rotator": ("<3i", ("Pitch", "Yaw", "Roll")),
+    "color": ("<4B", ("B", "G", "R", "A")),
+}
+
+
+def decode_value(pkg: Package, kind: int, struct_name: str | None, raw: bytes,
+                 inner: dict | None = None):
+    """One stored default as a JSON-friendly value.
+
+    Names and strings are typed (["name", "Foo"], ["str", "Foo"]) so a name that
+    came out as a lone apostrophe can't be mistaken for anything else. Values that
+    can't be decoded yet come back as ["raw", kind, hex].
+    """
+    r = Reader(raw)
+    if kind == K_BYTE:
+        return raw[0]
+    if kind == K_INT:
+        return struct.unpack("<i", raw)[0]
+    if kind == K_BOOL:
+        return bool(raw[0])
+    if kind == K_FLOAT:
+        return round(struct.unpack("<f", raw)[0], 6)
+    if kind == K_OBJECT:
+        return ["obj", pkg.ref_path(r.index())]
+    if kind == K_NAME:
+        return ["name", pkg.names[r.index()]]
+    if kind == K_STR:
+        return ["str", r.string()]
+    if kind == K_STRUCT:
+        layout = BINARY_STRUCTS.get((struct_name or "").lower())
+        if layout and len(raw) == struct.calcsize(layout[0]):
+            vals = struct.unpack(layout[0], raw)
+            return {k.lower(): (round(v, 6) if isinstance(v, float) else v)
+                    for k, v in zip(layout[1], vals)}
+        try:
+            props = _read_properties(pkg, r)
+            if r.p == len(raw):
+                return {k.lower(): decode_value(pkg, p.kind, p.struct_name, p.raw)
+                        for k, v in props.items() for p in v[:1]}
+        except (IndexError, struct.error):
+            pass
+    if kind == K_ARRAY and inner:
+        try:
+            out, n = [], r.index()
+            for _ in range(n):
+                if inner["kind"] == "NameProperty":
+                    out.append(["name", pkg.names[r.index()]])
+                elif inner["kind"] == "StrProperty":
+                    out.append(["str", r.string()])
+                elif inner["kind"] == "IntProperty":
+                    out.append(r.i32())
+                elif inner["kind"] in ("ObjectProperty", "ClassProperty"):
+                    out.append(["obj", pkg.ref_path(r.index())])
+                elif inner["kind"] == "ByteProperty":
+                    out.append(r.u8())
+                elif inner["kind"] == "FloatProperty":
+                    out.append(round(struct.unpack_from("<f", raw, r.p)[0], 6)); r.p += 4
+                else:
+                    raise ValueError(inner["kind"])
+            if r.p == len(raw):
+                return out
+        except (IndexError, ValueError, struct.error):
+            pass
+    return ["raw", kind, raw.hex()]
+
+
+def decode_defaults(pkg: Package, objects: dict, class_path: str) -> dict:
+    """{property: {array index: value}} for a class's stored defaults.
+
+    Property and struct member names are lowercased. UE2 names are case-insensitive
+    and a package's name table keeps whichever spelling it saw first (a member
+    declared `I` can come back as `i`), so the case says nothing about the source.
+    Name *values* keep their case.
+
+    Array element types come from the property declarations found in this package
+    (the class and its supers here); an array declared in another package stays raw.
+    """
+    decl = {}
+    path = class_path
+    while path in objects:
+        for f in fields_of(pkg, objects, objects[path].get("children")):
+            decl.setdefault(f["name"].lower(), f)
+        path = objects[path].get("super")
+    out = {}
+    for name, vals in objects[class_path].get("defaults", {}).items():
+        f = decl.get(name.lower())
+        inner = objects.get(f.get("inner")) if f and f["kind"] == "ArrayProperty" else None
+        for index, kind, hexraw, struct_name in vals:
+            out.setdefault(name.lower(), {})[str(index)] = decode_value(
+                pkg, kind, struct_name, bytes.fromhex(hexraw), inner)
+    return out
 
 
 # ---------------------------------------------------------------- the class view

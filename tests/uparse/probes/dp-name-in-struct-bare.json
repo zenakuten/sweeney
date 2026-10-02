@@ -3,8 +3,14 @@
  "errors": [],
  "ucc_id": "207224 bytes, mtime 2026-07-18 20:40:48",
  "defaults": {
-  "remoterole": {
-   "0": 2
+  "s": {
+   "0": {
+    "n": [
+     "name",
+     "Foo"
+    ],
+    "i": 3
+   }
   }
  }
 }

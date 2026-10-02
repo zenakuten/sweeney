@@ -267,6 +267,30 @@ are nested tagged lists with their own terminator, so a type-aware reader doesn'
 need the size. Those two are P6's first test cases. `reflect.py` flags them as
 `defaults_desync` and keeps their declarations.
 
+*Measured: `defaultproperties` syntax traps* (`tests/uparse/probes/dp-*`). Goldens for
+probes that compile record the decoded defaults UCC stored, and the parser is scored
+on them (`probes.defaults`), so silent failures count:
+
+| Written | UCC |
+|---|---|
+| `N=Foo`, `N="Foo"`, `N=Foo;` | stores `Foo` (double quotes also allow spaces: `"Foo Bar"`) |
+| `N='Foo'` | **silent**: stores the name `'`, a lone apostrophe. The same in a dynamic array (`AN(0)='Foo'`) |
+| `N=name'Foo'` | **silent**: stores `Name` |
+| `N=Foo Bar` | **silent**: stores `Foo`, truncated at the space |
+| `S=(N='Foo',I=3)` | error, line 0: `S::ImportText: Bad termination in: ...` (only inside a struct is it loud) |
+| `C=(R=255, G=128, ...)` | error, line 0: `Unknown member  A in C`. A space after a comma, before `=` or after `(` fails the whole struct, and the message names one member with the space in it |
+| `V=(X=1,Y=2,Z=3 )` | fine: a space before `)` is accepted |
+| `C=col(...)`, `V=vect(...)`, `R=rot(...)` | **silent**: compiles and stores nothing, so the property keeps its default |
+| `C=(G=128)` | stores G=128 and the other members as 0, not the parent's values |
+| `RemoteRole=2` (an enum) | **silent**: nothing stored |
+| `X=true ? 1 : 0` | **silent**: nothing stored |
+
+Errors raised while importing defaults carry no line number (line 0), so the parser
+has to report them that way too. `reflect.decode_defaults` decodes 96% of the
+install's stored defaults (names, strings, Color/Vector/Rotator binary layouts,
+nested-tag structs, arrays of simple types). What's left is arrays whose element type
+is declared in another package, delegates, and the one desync.
+
 **P7: Ship.**
 - `uparse check` emits diagnostics in UCC's format, so existing error parsing works.
 - `uccheck.py` gains the type-aware checks.

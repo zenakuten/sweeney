@@ -7,6 +7,10 @@ package Probe. Its golden is <id>.json beside it:
     {"outcome": "error", "errors": [{"file": "Probe.uc", "line": 3,
      "message": "Missing ';' before 'function'"}], "ucc_id": "..."}
 
+When the probe compiles, the golden also holds "defaults": the class defaults UCC
+actually stored, decoded by reflect.py. That is what catches the silent failures --
+a value written one way and stored as something else, or not stored at all.
+
 Only UCC writes goldens. Nobody edits one by hand -- that is what keeps the
 scoreboard honest when agents work on the parser unattended.
 
@@ -19,22 +23,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sandbox import Oracle  # noqa: E402
+from sandbox import Oracle, default_root  # noqa: E402
+import reflect  # noqa: E402
 
 PROBES = Path(__file__).resolve().parents[2] / "tests" / "uparse" / "probes"
 
 
-def golden_of(result, ucc_id: str) -> dict:
-    return {
+def golden_of(result, ucc_id: str, u_dir: Path | None = None) -> dict:
+    g = {
         "outcome": result.outcome,
         "errors": [{"file": d.file, "line": d.line, "message": d.message}
                    for d in result.errors],
         "ucc_id": ucc_id,
     }
+    if result.outcome == "ok" and u_dir and (u_dir / "Probe.u").exists():
+        pkg, objects, _ = reflect.load(u_dir / "Probe.u")
+        g["defaults"] = reflect.decode_defaults(pkg, objects, "Probe.Probe")
+    return g
 
 
 def load_probes(root: Path = PROBES) -> list[tuple[str, bytes, dict | None]]:
@@ -60,15 +71,23 @@ def main() -> int:
     if not todo:
         print(f"all {len(probes)} probes have goldens")
         return 0
-    o = Oracle(a.n, timeout=a.timeout, use_cache=not (a.refresh or a.check))
-    results = o.ask_many([{"Probe.uc": src} for _, src, _ in todo])
+    o = Oracle(a.n, timeout=a.timeout, use_cache=False)
+    work = Path(tempfile.mkdtemp(dir=default_root()))
+    import concurrent.futures as cf
+
+    def build(k):
+        keep = work / str(k)
+        return o.ask({"Probe": {"Probe.uc": todo[k][1]}}, keep_u=keep), keep
+
+    with cf.ThreadPoolExecutor(a.n) as ex:
+        built = list(ex.map(build, range(len(todo))))
 
     bad = 0
-    for (pid, _, old), r in zip(todo, results):
-        new = golden_of(r, o.ucc_id)
+    keys = ("outcome", "errors", "defaults")
+    for (pid, _, old), (r, keep) in zip(todo, built):
+        new = golden_of(r, o.ucc_id, keep)
         if a.check:
-            same = old and {k: old[k] for k in ("outcome", "errors")} == \
-                {k: new[k] for k in ("outcome", "errors")}
+            same = old and {k: old.get(k) for k in keys} == {k: new.get(k) for k in keys}
             if not same:
                 bad += 1
                 print(f"DIFFERS  {pid}: golden {old and old['outcome']}, UCC now {r.outcome}")
@@ -76,6 +95,7 @@ def main() -> int:
         (PROBES / f"{pid}.json").write_text(json.dumps(new, indent=1) + "\n")
         first = f"  {r.errors[0].line}: {r.errors[0].message}" if r.errors else ""
         print(f"{r.outcome:6s} {pid}{first}")
+    shutil.rmtree(work, ignore_errors=True)
     if a.check:
         print(f"{len(todo) - bad} of {len(todo)} goldens agree with UCC")
     return 1 if bad else 0
