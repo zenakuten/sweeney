@@ -402,6 +402,9 @@ class DefaultsImporter:
         want = "class" if prop["kind"] == "ClassProperty" else (prop.get("type") or "Core.Object")
         full = f"{'ClassProperty' if prop['kind'] == 'ClassProperty' else 'ObjectProperty'} " \
                f"{owner.get('_owner_path') or self.path()}.{owner['name']}"
+        if owner.get("kind") == "ArrayProperty":
+            # A dynamic array's element is its Inner property, an object inside it.
+            full += f".{owner['name']}"
         r2 = rest.lstrip(" ")
         if r2.startswith("'"):
             t2 = _read_token(r2[1:], dotted=True)

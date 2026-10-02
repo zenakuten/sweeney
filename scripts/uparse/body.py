@@ -136,12 +136,11 @@ class TypeSystem:
     def struct_is_child(self, child: str | None, parent: str | None) -> bool:
         if child is None or parent is None:
             return False
-        if child.split(".")[-1].lower() == parent.split(".")[-1].lower():
+        if _same_struct(child, parent):
             return True
         sdef = self.struct_def(child)
         while sdef is not None and sdef.get("super"):
-            sup = sdef["super"].split(".")[-1].lower()
-            if sup == parent.split(".")[-1].lower():
+            if _same_struct(sdef["super"], parent):
                 return True
             sdef = self.struct_def(sdef["super"])
         return False
@@ -190,7 +189,7 @@ class TypeSystem:
             return False
         if dest.kind == "struct":
             if identity:
-                return _same(dest.struct, src.struct)
+                return _same_struct(dest.struct, src.struct)
             return self.struct_is_child(src.struct, dest.struct)
         if dest.kind == "delegate":
             return True
@@ -232,6 +231,16 @@ def _same_path(a, b) -> bool:
     if a is None or b is None:
         return a is b
     return a.lower() == b.lower()
+
+
+def _same_struct(a, b) -> bool:
+    """Structs are the same when owner and name match: Seed_X.S is not X.S."""
+    if a is None or b is None:
+        return a is b
+    pa, pb = a.lower().split("."), b.lower().split(".")
+    if len(pa) >= 2 and len(pb) >= 2:
+        return pa[-2:] == pb[-2:]
+    return pa[-1] == pb[-1]
 
 
 def _same(a, b) -> bool:
@@ -888,14 +897,41 @@ class Body:
         if low in ("vect", "rot", "rng") and self.at("(", 1):
             return self._struct_const(low)
         if low == "arraycount":
-            raise Unsupported("ArrayCount")
+            self.next()
+            self.require("(", "'ArrayCount'")
+            save_aff = self.got_affector
+            r = self.operand(NONE, NONE)
+            r = self._postfix_no_index(r)
+            self.got_affector = save_aff
+            if not self.accept(")"):
+                raise Unsupported("ArrayCount argument")
+            if r.dim <= 1:
+                raise self.error("ArrayCount argument is not an array")
+            return T("int", const=True, value=r.dim)
         if low == "self":
             self.next()
             if self.static:
                 raise self.error("'self' is not allowed here")
             return T("object", cls=f"{self.s.package}.{self.s.own}")
         if low == "new":
-            raise Unsupported("new")
+            self.next()
+            if self.accept("("):
+                if not self.accept(")"):
+                    self.expr_required(T("object", cls=OBJECT_PATH), "'new' parent object")
+                    if self.accept(","):
+                        self.expr_required(T("string"), "'new' name")
+                        if self.accept(","):
+                            self.expr_required(T("int"), "'new' flags")
+                    self.require(")", "'new'")
+            code, cls_tok = self.compile_expr(T("object", cls=CLASS_PATH, meta=OBJECT_PATH), "'new'")
+            if not cls_tok.meta:
+                raise self.error("'new': Invalid class")
+            info = self.s.ctx.info(cls_tok.meta)
+            if info is None or (info.within and info.within.split(".")[-1].lower() != "object"):
+                raise Unsupported("new: within")
+            if self.accept("("):
+                self.require(")", "'new' constructor parameters")
+            return T("object", cls=cls_tok.meta)
         # Object literal: Type'Pkg.Name' (lexed as an identifier then an object/name).
         nxt = self.peek(1)
         if nxt is not None and nxt.kind in (OBJECT, NAME) and low not in ("case", "return", "goto"):
@@ -1092,16 +1128,34 @@ class Body:
             self.i += 2
             return self._field(self.peek(), force_scope, required, False, concrete, "func")
         if low == "super":
+            if self.at("(", 1):
+                if not is_self:
+                    raise self.error("Can only use 'super(classname)' with self")
+                self.i += 2
+                ctok = self.next()
+                if ctok is None or ctok.kind != IDENT:
+                    raise self.error("Missing class name")
+                target = self.s.ctx.info(ctok.text)
+                if target is None:
+                    raise CompileError(f"Bad class name '{ctok.text}'", ctok.line)
+                if target.name.lower() not in self.ts.class_chain(self.s.own):
+                    raise Unsupported("super(Class) outside the hierarchy")
+                self.require(")", "'super(classname)'")
+                if not self.accept("."):
+                    raise self.error("Missing '.' in 'super(classname)'")
+                if self.s.state is not None:
+                    raise Unsupported("super(Class) in state")
+                return self._field(self.peek(), target.path(), required, False, concrete, "func")
             if not is_self:
                 raise self.error("Can only use 'super' with self")
-            if self.at("(", 1):
-                raise Unsupported("super(Class)")
             if not self.at(".", 1):
                 raise Unsupported("super")
             self.i += 2
-            parent = self.s.view.get("super")
             if self.s.state is not None:
-                raise Unsupported("super in state")
+                # In a state, super calls the version above this one; its signature is
+                # the function's own, wherever it's declared.
+                return self._field(self.peek(), None, required, False, concrete, "func")
+            parent = self.s.view.get("super")
             return self._field(self.peek(), parent, required, False, concrete, "func")
         return self._field(tok, force_scope, required, is_self, concrete, None)
 
@@ -1110,9 +1164,11 @@ class Body:
         if tok is None or tok.kind != IDENT:
             raise Unsupported("field after specifier")
         found = self.s.find(tok.text, field_class, cls, in_function=cls is None and is_self)
-        if found is None and cls is None:
-            within = self._within()
-            if within is not None:
+        if found is None:
+            # UCC looks in the scope's ClassWithin next and emits an Outer hop, for
+            # any context, not only self.
+            within = self._within_of(cls)
+            if within.split(".")[-1].lower() != "object":
                 found = self.s.find(tok.text, field_class, within, in_function=False)
         if found is not None and found[0] == "func" and required.kind == "delegate" and not self.at("(", 1):
             # A function named where a delegate is wanted: the function as a delegate.
@@ -1152,7 +1208,8 @@ class Body:
             self.next()
             if "private" in v.flags and v.owner and v.owner.lower() != self.s.own.lower():
                 raise Unsupported("private access")
-            if "protected" in v.flags:
+            if "protected" in v.flags and v.owner and \
+                    v.owner.lower() not in self.ts.class_chain(self.s.own):
                 raise Unsupported("protected access")
             if default and v.local:
                 raise self.error("You can't access the default value of static and local variables")
@@ -1162,7 +1219,8 @@ class Body:
             if v.name.lower() == "class" and (v.owner or "").lower() == "object":
                 t = t.with_(meta=(cls or f"{self.s.package}.{self.s.own}"))
             if v.name.lower() == "outer" and (v.owner or "").lower() == "object":
-                raise Unsupported("Outer")
+                w = self._within_of(cls)
+                t = t.with_(cls=w)
             return t
         if kind == "func":
             fn = obj
@@ -1216,17 +1274,24 @@ class Body:
             return T("bool", const=True, value=t0.text.lower() == "true")
         raise Unsupported("const kind")
 
-    def _within(self):
-        w = self.s.view.get("within")
-        if not w or w.split(".")[-1].lower() == "object":
-            return None
-        return w
+    def _within_of(self, cls: str | None) -> str:
+        """ClassWithin of a class (own class by default), as a path."""
+        if cls is None or cls.split(".")[-1].lower() == self.s.own.lower():
+            w = self.s.view.get("within")
+        else:
+            info = self.s.ctx.info(cls)
+            w = None
+            for a in (self.s.ctx.ancestry(info.name) if info else []):
+                if a.within:
+                    w = a.within
+                    break
+        return w or OBJECT_PATH
 
     def _call(self, fn: Func, name_tok, concrete: bool, static: bool) -> T:
         self.got_affector = True
         if "private" in fn.flags and fn.owner.lower() != self.s.own.lower():
             raise Unsupported("private function")
-        if "protected" in fn.flags:
+        if "protected" in fn.flags and fn.owner.lower() not in self.ts.class_chain(self.s.own):
             raise Unsupported("protected function")
         if "latent" in fn.flags and self.kind != "state":
             raise self.error(f"{fn.name} is not allowed here")
@@ -1275,6 +1340,25 @@ class Body:
                 ret = ret.with_(cls=meta)
         return ret
 
+    def _postfix_no_index(self, tok: T) -> T:
+        """Member access without indexing the last array: ArrayCount wants the array."""
+        while tok.kind in ("struct", "object") and tok.dim == 1 and self.at("."):
+            if tok.kind == "struct":
+                self.next()
+                m = self.next()
+                members = self.s.struct_members(tok.struct or "")
+                member = next((x for x in (members or []) if m and x["name"].lower() == m.text.lower()), None)
+                if member is None:
+                    raise Unsupported("ArrayCount member")
+                tok = self.s.field_type(member, self.s.own)
+            else:
+                self.next()
+                r = self.field_expr(tok.cls, NONE, is_self=False, concrete=True)
+                if r.kind == "none":
+                    raise Unsupported("ArrayCount context")
+                tok = r
+        return tok
+
     # postfix: member access, arrays -----------------------------------------
 
     def postfix(self, tok: T, required: T) -> T:
@@ -1318,8 +1402,12 @@ class Body:
             elif tok.kind == "object" and self.at("."):
                 self.next()
                 if _same(tok.cls, CLASS_PATH) and (self.at("default") or self.at("static")):
+                    was = self.got_affector
+                    self.got_affector = False
                     tok = self.field_expr(tok.meta, required, is_self=False, concrete=False)
-                    if tok.kind == "none":
+                    called = self.got_affector
+                    self.got_affector = was or called
+                    if tok.kind == "none" and not called:
                         raise Unsupported("class context")
                     continue
                 m = self.peek()
@@ -1380,7 +1468,7 @@ class Body:
                     matches += 1
             if best_match == MAXINT:
                 if op.text in ("==", "!=") and tok.kind == "struct" and right.kind == "struct" \
-                        and _same(tok.struct, right.struct):
+                        and _same_struct(tok.struct, right.struct):
                     tok = T("bool")
                     continue
                 if any_left and not any_right:
