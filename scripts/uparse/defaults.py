@@ -390,7 +390,43 @@ class DefaultsImporter:
             return self._import_object(prop, buf, owner)
         if k == "StructProperty":
             return self._import_struct(prop, buf, cur)
+        if k == "ArrayProperty":
+            return self._import_array(prop, buf)
         raise _Unpredictable(k)
+
+    def _import_array(self, prop: dict, buf: str):
+        """UArrayProperty::ImportText: (a,b,,c). The array starts empty; a skipped
+        element is zeroed; each element is imported delimited."""
+        if not buf.startswith("("):
+            return None
+        inner = self._inner(prop)
+        arr: list = []
+        rest = buf[1:]
+        index = 0
+        while rest[:1] != ")":
+            if not rest:
+                raise _Unpredictable("array: runs off the line")
+            while rest[:1] == ",":
+                rest = rest[1:]
+                if index >= len(arr):
+                    arr.append(self._zero(inner))
+                index += 1
+                if rest[:1] == ")":
+                    return arr, rest[1:]
+            if index >= len(arr):
+                arr.append(self._zero(inner))
+            r = self._import_rest(inner, rest, arr[index], prop)
+            index += 1
+            if r is None:
+                return None
+            arr[index - 1] = r[0] if r[0] != [None] else None
+            rest = r[1]
+            if rest[:1] != ",":
+                break
+            rest = rest[1:]
+        if rest[:1] != ")":
+            return None
+        return arr, rest[1:]
 
     def _import_object(self, prop: dict, buf: str, owner: dict):
         t = _read_token(buf, dotted=True)
