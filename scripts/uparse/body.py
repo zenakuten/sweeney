@@ -176,7 +176,9 @@ class TypeSystem:
         if dest.dim != src.dim:
             return False
         if dest.kind == "byte":
-            return _same(dest.enum, src.enum) or (dest.enum is None and not identity)
+            # Enums are distinct by their declaring class: a renamed class's ELinkColor
+            # isn't LinkAttachment.ELinkColor.
+            return _same_path(dest.enum, src.enum) or (dest.enum is None and not identity)
         if dest.kind == "object":
             if identity:
                 return _same(dest.cls, src.cls) and _same(dest.meta, src.meta)
@@ -224,6 +226,12 @@ class TypeSystem:
         if src.kind in ("int", "pointer", "byte") and dest.kind == "float":
             return 103
         return 101
+
+
+def _same_path(a, b) -> bool:
+    if a is None or b is None:
+        return a is b
+    return a.lower() == b.lower()
 
 
 def _same(a, b) -> bool:

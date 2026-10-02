@@ -41,7 +41,12 @@ BINARY_STRUCTS = {"vector": ("x", "y", "z"), "rotator": ("pitch", "yaw", "roll")
 
 
 class _Unpredictable(Exception):
-    pass
+    """A value we can't predict. `errors` says whether it could also hide an error
+    (an unknown struct can; a delegate to a function that exists can't)."""
+
+    def __init__(self, reason: str = "", errors: bool = True):
+        super().__init__(reason)
+        self.errors = errors
 
 
 # ---------------------------------------------------------------- C-style readers
@@ -128,6 +133,10 @@ class DefaultsImporter:
         self.object_exists = object_exists  # (class or None, path) -> class name or None
         self.errors: list[str] = []         # every logged line, in order
         self.failed = False                 # an error that fails the build
+        self.values_known = True            # every stored value predicted
+        self.errors_known = True            # no line we couldn't check for errors
+        self.subobjects: set[str] = set()   # Begin Object Name=... in this block
+        self.unknown_reason = None
 
     def path(self) -> str:
         return f"{self.package}.{self.class_name}"
@@ -137,54 +146,110 @@ class DefaultsImporter:
         self.failed = True
 
     def run(self, lines: list[str]) -> None:
-        defined = set()
-        depth = 0
+        self.subobject_class: dict[str, str] = {}
         for raw in _split_lines(lines):
+            m = re.match(r"\s*begin\s+object\b.*?\bname\s*=\s*(\w+)", raw, re.I)
+            if m:
+                self.subobjects.add(m.group(1).lower())
+                c = re.search(r"\bclass\s*=\s*([\w.]+)", raw, re.I)
+                if c:
+                    self.subobject_class[m.group(1).lower()] = c.group(1)
+        self._defined = set()
+        self._stack: list = []
+        for raw in _split_lines(lines):
+            try:
+                self._line(raw)
+            except _Unpredictable as e:
+                # Skip this line: its value is unknown, and maybe whether it errors.
+                self.values_known = False
+                if e.errors:
+                    self.errors_known = False
+                    self.unknown_reason = self.unknown_reason or str(e)
+
+    def _line(self, raw: str) -> None:
+        defined = self._defined
+        if True:
             s = raw.lstrip(" \t")
             low = s.lower()
             if re.match(r"begin\s+object\b", low):
-                depth += 1
-                continue
+                # A subobject: its lines set the subobject class's properties. Nothing
+                # is stored in this class's defaults, but its errors still fail the build.
+                m = re.search(r"\bclass\s*=\s*([\w.]+)", s, re.I)
+                self._stack.append(self._subobject_props(m.group(1) if m else None))
+                return
             if re.match(r"end\s+object\b", low):
-                depth = max(0, depth - 1)
-                continue
-            if depth:
-                continue
+                if self._stack:
+                    self._stack.pop()
+                return
+            if self._stack:
+                frame = self._stack[-1]
+                if frame is None:
+                    raise _Unpredictable("subobject class")
+                saved = (self.props, self.values, self.parent, self.class_name, self.package,
+                         self._defined)
+                self.props, self.values, self.parent = frame["props"], {}, {}
+                self.package, self.class_name = frame["path"].split(".", 1)
+                self._defined = frame["defined"]
+                try:
+                    self._assign(raw, s)
+                finally:
+                    (self.props, self.values, self.parent, self.class_name, self.package,
+                     self._defined) = saved
+                return
+            self._assign(raw, s)
+
+    def _subobject_props(self, cls: str | None):
+        """{lower name: property} for a subobject's class, or None if unknown."""
+        if not cls:
+            return None
+        info = self.ctx.info(cls)
+        if info is None:
+            return None
+        props = {}
+        for anc in self.ctx.ancestry(info.name):
+            for low, f in anc.var_defs.items():
+                if low not in props:
+                    props[low] = {**self.resolve_inner(f, anc.name), "_owner_path": anc.path()}
+        return {"props": props, "path": info.path(), "defined": set()}
+
+    def _assign(self, raw: str, s: str) -> None:
+        defined = self._defined
+        if True:
             m = re.match(r"([^=(\[]*)", s)
             token = m.group(1).rstrip(" \t")
             rest = s[m.end():]
             if not rest:
-                continue
+                return
             index = -1
             if rest[0] in "([":
                 index = _atoi(rest[1:])
                 close = re.search(r"[)\]]", rest)
                 if not close:
-                    continue              # an ExecWarning: no build failure
+                    return              # an ExecWarning: no build failure
                 rest = rest[close.end():]
             rest = rest.lstrip(" \t")
             if not rest.startswith("="):
-                continue                  # "Missing '='": an ExecWarning only
+                return                  # "Missing '='": an ExecWarning only
             value = rest[1:].lstrip(" \t")
             prop = self.props.get(token.lower())
             if prop is None:
                 prop = self.props.get(f"__{token}__delegate".lower())
                 if prop is None:
                     self.errors.append(f"{self.path()}: Unknown property in defaults: {raw}")
-                    continue
+                    return
             dim = prop.get("array_dim", 1)
             if not isinstance(dim, int):
                 dim = 1 << 30             # a constant we didn't resolve: don't judge
             if index >= dim and prop["kind"] != "ArrayProperty":
                 self.errors.append(f"{self.path()}: Out of bound array default property ({index}/{dim})")
-                continue
+                return
             key = (prop["name"].lower(), index)
             if key in defined:
                 self.log_error(f"redundant data: {raw}")
-                continue
+                return
             defined.add(key)
             if prop["name"].lower() == "name":
-                continue
+                return
             value = value.rstrip(" \t;")
             if prop["kind"] == "StrProperty" and (not value or value[0] != '"' or value[-1] != '"'):
                 self.log_error(f"{self.path()}: Missing '\"' in string default properties : {raw}")
@@ -200,12 +265,25 @@ class DefaultsImporter:
                 self.values.setdefault(name, {})["0"] = arr
             elif prop["kind"] == "DelegateProperty":
                 if value.lower() == "none":
-                    continue
-                target = value.split(".")[-1].lower()
-                if not self.function_exists(target):
+                    return
+                parts = value.split(".")
+                target = parts[-1].lower()
+                if len(parts) == 2:
+                    # Object.Function: a subobject (or class) and a function of its class.
+                    if parts[0].lower() == "none":
+                        self.log_error(f"{self.path()}: Delegate assignment failed: {raw}")
+                        return
+                    owner = self.subobject_class.get(parts[0].lower()) or parts[0]
+                    info = self.ctx.info(owner)
+                    if info is None:
+                        raise _Unpredictable("delegate object", errors=False)
+                    exists = any(target in a.functions for a in self.ctx.ancestry(info.name))
+                else:
+                    exists = self.function_exists(target)
+                if not exists:
                     self.log_error(f"{self.path()}: Delegate assignment failed: {raw}")
-                    continue
-                raise _Unpredictable("delegate defaults")   # stored, but not decoded
+                    return
+                raise _Unpredictable("delegate defaults", errors=False)   # stored, not decoded
             else:
                 idx = str(max(index, 0))
                 cur = self.values.get(name, {}).get(idx, self._zero(prop))
@@ -216,7 +294,14 @@ class DefaultsImporter:
     # -------------------------------------------------------- per-type import
 
     def _inner(self, prop: dict) -> dict:
-        inner = prop.get("inner_field")
+        """An array property's element type: resolved (own class), compiled (`_inner`)
+        or raw from source (`inner_type`)."""
+        inner = prop.get("inner_field") or prop.get("_inner_field") or prop.get("_inner")
+        if inner is None and prop.get("inner_type"):
+            it = prop["inner_type"]
+            inner = {"name": prop["name"], "kind": it["kind"], "type": it.get("type"),
+                     "enum": it.get("enum"), "meta_class": it.get("meta_class")}
+            inner = self.resolve_inner(inner, prop.get("_owner_path", self.path()).split(".")[-1])
         if inner is None:
             raise _Unpredictable("array element type")
         return inner
@@ -331,7 +416,9 @@ class DefaultsImporter:
             found = self.object_exists(want.split(".")[-1] if prop["kind"] != "ClassProperty"
                                        else "class", obj_path, False)
         if found is UNKNOWN:
-            raise _Unpredictable("object reference")
+            # Objects of the package being built, subobjects of this block, packages
+            # #exec makes: not checkable here, but not errors in practice.
+            raise _Unpredictable("object reference", errors=False)
         if not found:
             self.log_error(f"{full}: unresolved reference to '{buf}'")
             return None
@@ -486,13 +573,12 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
     name = view["name"]
     sup = view.get("super")
     parent_values = ctx.effective_defaults(sup) if sup else {}
+    unknown_parent = False
     if parent_values is None:
-        return None, [], False
+        parent_values, unknown_parent = {}, True
     if any(v is None for v in parent_values.values()):
         parent_values = {k: v for k, v in parent_values.items() if v is not None}
         unknown_parent = True
-    else:
-        unknown_parent = False
 
     own_fields = view["fields"]
     own_structs = {f["name"].lower(): f for f in own_fields if f["kind"] == "Struct"}
@@ -566,7 +652,12 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
 
     def object_exists(cls, path: str, quoted: bool):
         if "." not in path:
-            return UNKNOWN                # a subobject (Begin Object Name=...) or own object
+            if path.lower() in _current_importer.subobjects:
+                return UNKNOWN            # a subobject declared in this block
+            hit = ctx.find_loaded(path)
+            if hit is None:
+                return None
+            return UNKNOWN
         pkg_name = path.split(".")[0]
         if pkg_name.lower() in (package.lower(), name.lower()):
             return UNKNOWN                # objects of the package being built
@@ -608,15 +699,19 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
 
     imp = DefaultsImporter(ctx, name, package, props, parent_values, enum_values,
                            struct_members, object_exists, own_structs)
+    imp.resolve_inner = resolve_prop
+    globals()["_current_importer"] = imp
     own_fns = {f["name"].lower() for f in own_fields if f["kind"] == "Function"}
     imp.function_exists = lambda low: low in own_fns or any(
         low in i.functions for i in ctx.ancestry(sup))
+    imp.run(lines)
+    globals()["last_unknown_reason"] = imp.unknown_reason
+    if imp.failed and not imp.errors_known:
+        # An error we saw, but a line we skipped may have logged later: the last
+        # message UCC shows is beyond what we can follow.
+        return None, [], False, False
     try:
-        imp.run(lines)
+        stored = imp.stored() if imp.values_known and not unknown_parent else None
     except _Unpredictable:
-        # Partway through: whatever UCC logs last is beyond what we can follow.
-        return None, [], False
-    stored = imp.stored()
-    if unknown_parent:
-        return None, imp.errors, imp.failed
-    return stored, imp.errors, imp.failed
+        stored = None
+    return stored, imp.errors, imp.failed, imp.errors_known

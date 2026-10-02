@@ -40,6 +40,7 @@ class Analysis:
     view: dict | None = None        # the resolved declarations (when it parses)
     defaults: dict | None = None    # what UCC would store for the class's defaults
     compiled: bool = False          # every stage modelled and clean: UCC would compile it
+    unknown: str | None = None      # why it isn't "compiled" when there's no error
 
 
 def analyze(name: str, src: bytes, package: str | None = None, context=None,
@@ -122,19 +123,22 @@ def _analyze(name, src, package, context, path) -> Analysis:
     # Function bodies and state code (pass 2).
     from .body import compile_bodies, Unsupported
     bodies_ok = True
+    unknown = None
     try:
         err = compile_bodies(tokens, _body_spans(resolved), resolved, ctx, package, eof_line)
-    except (Unsupported, RecursionError):
-        err, bodies_ok = None, False
-    except Exception:
-        err, bodies_ok = None, False
+    except Unsupported as e:
+        err, bodies_ok, unknown = None, False, f"unsupported: {e}"
+    except RecursionError:
+        err, bodies_ok, unknown = None, False, "recursion"
+    except Exception as e:
+        err, bodies_ok, unknown = None, False, f"crash: {type(e).__name__}: {e}"
     if err is not None:
         return Analysis(error=Diag(name, err.line, err.message), view=resolved)
 
     from .defaults import predict_defaults
-    stored, logged, failed = predict_defaults(_with_inner(resolved), [t for _, t in im.defaults],
-                                              package, ctx, _stock_packages(ctx),
-                                              has_exec="#exec" in text.lower())
+    stored, logged, failed, defaults_checked = predict_defaults(
+        _with_inner(resolved), [t for _, t in im.defaults], package, ctx, _stock_packages(ctx),
+        has_exec=bool(_EXEC_LINE.search(text)))
     if failed and logged:
         return Analysis(error=Diag(name, 0, logged[-1]), view=resolved)
     # A 64-character identifier gets through the lexer (65 doesn't) but can't be made
@@ -142,7 +146,15 @@ def _analyze(name, src, package, context, path) -> Analysis:
     for t in tokens:
         if t.kind == "ident" and len(t.text) >= 64:
             return Analysis(error=Diag(name, 0, f"Unhashed name '{t.text[:63]}'"), view=resolved)
-    return Analysis(view=resolved, defaults=stored, compiled=bodies_ok and stored is not None)
+    if not defaults_checked and unknown is None:
+        from . import defaults as _d
+        unknown = f"defaults: {getattr(_d, 'last_unknown_reason', None)}"
+    return Analysis(view=resolved, defaults=stored, compiled=bodies_ok and defaults_checked,
+                    unknown=unknown)
+
+
+import re as _re
+_EXEC_LINE = _re.compile(r"^[ \t]*#[ \t]*exec\b", _re.I | _re.M)
 
 
 def _body_spans(view: dict) -> list:

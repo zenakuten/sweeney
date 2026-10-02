@@ -631,6 +631,24 @@ Found while getting it right:
 The rest is "don't know": constructs `body.py` doesn't model yet (`new`,
 `super(Class)`, named consts in expressions, private/protected access, ...).
 
+**Second round.** Predicting `ok` needs to know that the defaults import raises no
+errors, not every stored value. The importer now tracks the two separately and skips
+only a doubtful line: a delegate to a function that exists, a reference to a
+subobject, an ancestor whose defaults don't decode. Also modelled:
+- **`Begin Object` blocks:** imported against the subobject's class. Nothing is stored
+  in the class defaults, but errors fail the build.
+- **Delegates written `Object.Function`:** the function is looked up in that
+  subobject's class.
+- **Enums compare by full path:** a renamed class's `ELinkColor` isn't
+  `LinkAttachment.ELinkColor`.
+
+| seeds | first stage | now |
+|---|---|---|
+| UCC accepts, predicted ok | 1663/2986 | **2598/2986 (87%)** |
+| UCC rejects, predicted error | 361/507 | **445/507 (88%)**, 375 exact |
+
+Still no wrong outcome predicted anywhere.
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,
