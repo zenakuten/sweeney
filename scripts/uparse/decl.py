@@ -979,6 +979,11 @@ class DeclParser:
         while depth:
             tok = c.peek()
             if tok is None:
+                if after_code:
+                    # Pass 1 pops the function at its first statement and skips the
+                    # rest with SkipStatements, which names the enclosing block.
+                    outer = c.blocks[-2] if len(c.blocks) > 1 else "Class"
+                    raise DeclError(f"Unexpected end of file at end of {outer}", c.eof_line, len(c.t))
                 raise c.eof()
             w = tok.text.lower() if tok.kind == IDENT else None
             if at_statement_start and depth == 1 and w == "var":

@@ -557,6 +557,11 @@ class Scope:
 
 # ---------------------------------------------------------------- the compiler
 
+# Statements that CheckAllow(ALLOW_Cmd), and the name UCC gives them when refused.
+CMD_WORDS = {"switch": "'Switch'", "if": "'If'", "while": "'While'", "do": "'Do'",
+             "for": "'For'", "foreach": "'ForEach'", "assert": "'Assert'"}
+
+
 class Body:
     """Compiles one function body (or state code) from its tokens."""
 
@@ -572,6 +577,7 @@ class Body:
         self.eof_line = eof_line
         self.got_affector = False
         self.nests: list[dict] = []
+        self.vardecl_ok = True        # no command yet: locals still allowed
         self.labels: set[str] = set()
         self.gotos: list[tuple[str, int]] = []
 
@@ -645,7 +651,9 @@ class Body:
             raise Unsupported("unclosed block")
         for label, line in self.gotos:
             if label.lower() not in self.labels:
-                raise CompileError(f"Label '{label}' not found in this block of code", line)
+                # Checked when the block ends: reported at its closing brace.
+                raise CompileError(f"Label '{label}' not found in this block of code",
+                                   self.close.line if self.close is not None else line)
 
     def statement(self) -> None:
         tok = self.next()
@@ -653,6 +661,13 @@ class Body:
         w = tok.text.lower() if tok.kind == IDENT else None
         if tok.kind == SYMBOL and tok.text == "#":
             raise Unsupported("directive in a body")
+        if w == "local" and not (self.kind == "function" and self.vardecl_ok and
+                                 all(n["kind"] == "block" for n in self.nests)):
+            # Locals come first: the first command clears ALLOW_VarDecl, and no nest
+            # (if, loop, switch) or state code grants it.
+            raise self.error("'Local' is not allowed here")
+        if w in CMD_WORDS:
+            self._cmd(CMD_WORDS[w])
         if w in ("local", "const"):
             # Declared in the first pass (a const may sit in a body); skip it.
             while self.peek() is not None and not self.at(";"):
@@ -737,6 +752,7 @@ class Body:
             self.labels.add(tok.text.lower())
             need_semicolon = False
         else:
+            self._cmd("Expression")
             self.i -= 1
             self.affector()
         if need_semicolon and not self.accept(";"):
@@ -782,6 +798,14 @@ class Body:
                 raise self.error("The loop syntax is do...until, not do...while")
             else:
                 raise Unsupported("do without until")
+
+    def _cmd(self, thing: str) -> None:
+        """CheckAllow(thing, ALLOW_Cmd): refused where commands aren't allowed (a
+        switch before its first case); and once a command is seen, no more locals.
+        return, break, goto and labels check other flags, so they don't count."""
+        if "cmd" not in self._allowed():
+            raise self.error(f"{thing} is not allowed here")
+        self.vardecl_ok = False
 
     def _allowed(self) -> set:
         """UCC's ALLOW_ flags at this point, as PushNest computes them: a loop grants
@@ -1215,15 +1239,18 @@ class Body:
             if self.s.state is not None:
                 # In a state, super calls the version above this one; its signature is
                 # the function's own, wherever it's declared.
-                return self._field(self.peek(), None, required, False, concrete, "func")
+                return self._field(self.peek(), None, required, False, concrete, "func",
+                                   unknown_in=self._super_state_scope())
             parent = self.s.view.get("super")
             return self._field(self.peek(), parent, required, False, concrete, "func")
         return self._field(tok, force_scope, required, is_self, concrete, None)
 
     def _field(self, tok, cls, required: T, is_self: bool, concrete: bool, field_class,
-               default=False, static=False) -> T:
+               default=False, static=False, unknown_in: str | None = None) -> T:
         if tok is None or tok.kind != IDENT:
-            raise Unsupported("field after specifier")
+            if tok is None or not field_class:
+                raise Unsupported("field after specifier")
+            raise self._unknown_field(field_class, self._member_text(), cls, unknown_in, tok.line)
         found = self.s.find(tok.text, field_class, cls, in_function=cls is None and is_self)
         if found is None:
             # UCC looks in the scope's ClassWithin next and emits an Outer hop, for
@@ -1247,7 +1274,7 @@ class Body:
             found = alt
         if found is None:
             if field_class:
-                raise Unsupported(f"unknown field after specifier: {tok.text} line {tok.line}")
+                raise self._unknown_field(field_class, tok.text, cls, unknown_in, tok.line)
             return NONE
         kind, obj = found
         if kind == "enum":
@@ -1334,6 +1361,50 @@ class Body:
         if t0.kind == IDENT and t0.text.lower() in ("true", "false"):
             return T("bool", const=True, value=t0.text.lower() == "true")
         raise Unsupported("const kind")
+
+    def _unknown_field(self, field_class: str, name: str, cls, unknown_in, line) -> CompileError:
+        """UCC's "Unknown Function/Property 'X' in '<scope's full name>'"."""
+        what = "Function" if field_class == "func" else "Property"
+        return CompileError(f"Unknown {what} '{name}' in '{unknown_in or self._scope_name(cls)}'", line)
+
+    def _scope_name(self, cls) -> str:
+        """GetFullName of the scope a specifier searched: a class, or for self the
+        function (or state code) being compiled."""
+        pkg, own = self.s.package, self.s.own
+        if cls is not None:
+            info = self._class_info(cls.split(".")[-1])
+            if info is None:
+                raise Unsupported("scope name")
+            return f"Class {info.path()}"
+        st = f"{self.s.state['name']}." if self.s.state is not None else ""
+        if self.s.func is not None:
+            return f"Function {pkg}.{own}.{st}{self.s.func['name']}"
+        if self.s.state is not None:
+            return f"State {pkg}.{own}.{self.s.state['name']}"
+        raise Unsupported("scope name")
+
+    def _super_state_scope(self) -> str:
+        """Where super. looks from a state: the state it extends, else the same-named
+        state up the class chain, else (no parent state) the parent class."""
+        st = self.s.state
+        parent = self.s.view.get("super")
+        ext = st.get("super")
+        if ext:
+            if any(g["kind"] == "State" and g["name"].lower() == ext.split(".")[-1].lower()
+                   for g in self.s.view["fields"]):
+                return f"State {self.s.package}.{self.s.own}.{ext.split('.')[-1]}"
+            name = ext.split(".")[-1]
+        else:
+            name = st["name"]
+        for anc in self.s.ctx.ancestry(parent):
+            if name.lower() in anc.states:
+                return f"State {anc.path()}.{name}"
+        if ext:
+            raise Unsupported("super state")
+        info = self.s.ctx.info(parent)
+        if info is None:
+            raise Unsupported("super scope")
+        return f"Class {info.path()}"
 
     def _within_of(self, cls: str | None) -> str:
         """ClassWithin of a class (own class by default), as a path."""
