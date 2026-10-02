@@ -249,6 +249,15 @@ def _same(a, b) -> bool:
     return a.split(".")[-1].lower() == b.split(".")[-1].lower()
 
 
+@dataclasses.dataclass
+class _OwnClass:
+    name: str
+    _path: str
+
+    def path(self) -> str:
+        return self._path
+
+
 # ---------------------------------------------------------------- fields
 
 @dataclasses.dataclass
@@ -940,8 +949,12 @@ class Body:
                 is_actor = any(a.name.lower() == "actor" for a in self.s.ctx.ancestry(info.name))
                 if not is_actor or nxt.kind == OBJECT:
                     self.i += 2
+                    from . import literal_problem
+                    problem = literal_problem(self.s.ctx, self.s.package, self.s.own, info.name, nxt.text)
+                    if problem is not None and problem != "unknown":
+                        raise CompileError(problem, nxt.line)
                     if info.name.lower() == "class":
-                        target = self.s.ctx.info(nxt.text)
+                        target = self._class_info(nxt.text)
                         if target is None:
                             raise Unsupported("class literal")
                         return T("object", cls=CLASS_PATH, meta=target.path(), const=True)
@@ -971,6 +984,12 @@ class Body:
         if cast is not None:
             return cast
         return self.field_expr(None, required, is_self=True, concrete=not self.static)
+
+    def _class_info(self, name: str):
+        """A class by name, the one being compiled included (it isn't in the context)."""
+        if name.lower() == self.s.own.lower():
+            return _OwnClass(self.s.own, f"{self.s.package}.{self.s.own}")
+        return self.s.ctx.info(name)
 
     def _const_number(self, kind: str, value, required: T) -> T:
         if kind == INT:
@@ -1046,9 +1065,7 @@ class Body:
         nxt = self.peek(1)
         if nxt is None or not (nxt.kind == SYMBOL and nxt.text in ("(", "<")):
             return None
-        info = self.s.ctx.info(tok.text)
-        if info is None and tok.text.lower() == self.s.own.lower():
-            raise Unsupported("cast to own class")
+        info = self._class_info(tok.text)
         if info is None:
             enum = self.s.find(tok.text, None)
             if (enum is None or enum[0] != "enum") and nxt.text == "(":
@@ -1075,7 +1092,7 @@ class Body:
         meta = OBJECT_PATH
         if info.name.lower() == "class" and self.accept("<"):
             m = self.next()
-            mi = self.s.ctx.info(m.text) if m is not None else None
+            mi = self._class_info(m.text) if m is not None else None
             if mi is None or not self.accept(">") or not self.at("("):
                 self.i = save
                 return None

@@ -118,8 +118,6 @@ def _analyze(name, src, package, context, path) -> Analysis:
     # Object literals in code: compiled in pass 2, before defaults are imported.
     # UCC only finds objects already loaded ("Can't find Sound 'Pkg.Name'").
     lit = _object_literal_error(tokens, ctx, package, name)
-    if lit is not None:
-        return Analysis(error=lit, view=resolved)
 
     # Function bodies and state code (pass 2).
     from .body import compile_bodies, Unsupported
@@ -135,6 +133,10 @@ def _analyze(name, src, package, context, path) -> Analysis:
         err, bodies_ok, unknown = None, False, f"crash: {type(e).__name__}: {e}"
     if err is not None:
         return Analysis(error=Diag(name, err.line, err.message), view=resolved)
+    if lit is not None:
+        # The bodies stopped short of it, but a literal that finds no object is an
+        # error wherever it is; which one UCC meets first is a guess.
+        return Analysis(error=lit, view=resolved)
 
     from .defaults import predict_defaults
     stored, logged, failed, defaults_checked = predict_defaults(
@@ -198,25 +200,34 @@ def _object_literal_error(tokens, ctx, package: str, name: str) -> "Diag | None"
             return None
         if any(a.name.lower() == "actor" for a in ctx.ancestry(tinfo.name)):
             return None
-        path = t.text
-        pkg = path.split(".")[0].lower()
-        if pkg in (package.lower(), name.rsplit(".", 1)[0].lower()):
-            continue
-        if tinfo.name.lower() == "class":
-            if ctx.info(path) is not None:
-                continue
-            if "." in path and pkg in ctx.visible:
-                return None               # loaded, but we may just not know the class
-            if "." not in path:
-                return None               # a bare class name: own package, can't tell
-        else:
-            hit = ctx.find_loaded(path)
-            if hit == "ambiguous":
-                return None
-            if hit is not None:
-                continue
-        return Diag(name, t.line, f"Can't find {tinfo.name} '{path}'")
+        problem = literal_problem(ctx, package, name.rsplit(".", 1)[0], tinfo.name, t.text)
+        if problem == "unknown":
+            return None
+        if problem is not None:
+            return Diag(name, t.line, problem)
     return None
+
+
+def literal_problem(ctx, package: str, own: str, type_name: str, path: str) -> str | None:
+    """Whether the object literal type_name'path' finds its object: None when it does,
+    the message when it doesn't, "unknown" when we can't tell."""
+    if ctx.visible is None:
+        return "unknown"
+    pkg = path.split(".")[0].lower()
+    if pkg in (package.lower(), own.lower()):
+        return None
+    if type_name.lower() == "class":
+        if ctx.info(path) is not None:
+            return None
+        if "." in path and pkg in ctx.visible:
+            return "unknown"              # loaded, but we may just not know the class
+    else:
+        hit = ctx.find_loaded(path)
+        if hit == "ambiguous":
+            return "unknown"
+        if hit is not None:
+            return None
+    return f"Can't find {type_name} '{path}'"
 
 
 def _with_inner(view: dict) -> dict:
