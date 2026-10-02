@@ -100,6 +100,7 @@ class Context:
         # Packages loaded whole (EditPackages, deps, the one being built); the rest
         # of `visible` is only what their import tables name.
         self.fully_loaded: set | None = None
+        self.last_hits: list = []                 # find_loaded's in-memory matches
         self._imported_paths: dict[str, set] = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
         self.struct_owners: dict[str, list] = {}  # every class declaring a struct of that name
@@ -490,6 +491,7 @@ class Context:
         objects of that class or a subclass count (StaticFindObject's class filter:
         XEffects.GibBotCalf is a class and a static mesh). (path, class),
         "ambiguous", or None."""
+        self.last_hits = []
         if self.visible is None:
             return "ambiguous"
         want = path.lower()
@@ -506,9 +508,11 @@ class Context:
         if cls is not None:
             hits = [h for h in hits if self._is_a(h[1], cls) is not False]
         hits = list(dict.fromkeys(hits))
+        self.last_hits = hits
         unsure = [h for h in hits if self.loaded_object(h[0].split(".")[0], h[0]) is None]
         if unsure:
             hits = [h for h in hits if h not in unsure]
+            self.last_hits = hits
             if not hits:
                 return "ambiguous"        # there, but maybe not in memory
         if not hits:

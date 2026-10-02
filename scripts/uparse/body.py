@@ -911,11 +911,11 @@ class Body:
             self.next()
             self.require("(", "'ArrayCount'")
             save_aff = self.got_affector
-            r = self.operand(NONE, NONE)
-            r = self._postfix_no_index(r)
+            code, r = self.compile_expr(NONE, "'ArrayCount'")
             self.got_affector = save_aff
-            if not self.accept(")"):
-                raise Unsupported("ArrayCount argument")
+            if not code:
+                raise self.error("Bad or missing expression in 'ArrayCount'")
+            self.require(")", "'ArrayCount'")
             if r.dim <= 1:
                 raise self.error("ArrayCount argument is not an array")
             return T("int", const=True, value=r.dim)
@@ -966,8 +966,10 @@ class Body:
                     # The constant takes its object's real class (Material'x' may be a
                     # Texture).
                     hit = self.s.ctx.find_loaded(nxt.text, info.name)
+                    if hit == "ambiguous" and len({h[1].lower() for h in self.s.ctx.last_hits}) == 1:
+                        hit = self.s.ctx.last_hits[0]   # several objects, all one class
                     if hit is None or hit == "ambiguous":
-                        raise Unsupported("object literal")
+                        raise Unsupported(f"object literal {info.name}'{nxt.text}' -> {hit}")
                     real = self.s.ctx.info(hit[1])
                     if real is None:
                         raise Unsupported("object literal class")
@@ -1157,17 +1159,23 @@ class Body:
                 ctok = self.next()
                 if ctok is None or ctok.kind != IDENT:
                     raise self.error("Missing class name")
-                target = self.s.ctx.info(ctok.text)
+                # Any loaded class will do: UCC's "does not expand" check compares
+                # the class with itself.
+                target = self._class_info(ctok.text)
                 if target is None:
                     raise CompileError(f"Bad class name '{ctok.text}'", ctok.line)
-                if target.name.lower() not in self.ts.class_chain(self.s.own):
-                    raise Unsupported("super(Class) outside the hierarchy")
                 self.require(")", "'super(classname)'")
-                if not self.accept("."):
-                    raise self.error("Missing '.' in 'super(classname)'")
-                if self.s.state is not None:
+                self.require(".", "'super(classname)'")
+                save = self.i
+                try:
+                    return self._field(self.peek(), target.path(), required, False, concrete, "func")
+                except Unsupported:
+                    if self.s.state is None:
+                        raise
+                    # In a state the lookup starts at that class's same-named state,
+                    # which may hold a function the class doesn't.
+                    self.i = save
                     raise Unsupported("super(Class) in state")
-                return self._field(self.peek(), target.path(), required, False, concrete, "func")
             if not is_self:
                 raise self.error("Can only use 'super' with self")
             if not self.at(".", 1):
@@ -1208,7 +1216,7 @@ class Body:
             found = alt
         if found is None:
             if field_class:
-                raise Unsupported("unknown field after specifier")
+                raise Unsupported(f"unknown field after specifier: {tok.text} line {tok.line}")
             return NONE
         kind, obj = found
         if kind == "enum":
@@ -1361,25 +1369,6 @@ class Body:
             if meta:
                 ret = ret.with_(cls=meta)
         return ret
-
-    def _postfix_no_index(self, tok: T) -> T:
-        """Member access without indexing the last array: ArrayCount wants the array."""
-        while tok.kind in ("struct", "object") and tok.dim == 1 and self.at("."):
-            if tok.kind == "struct":
-                self.next()
-                m = self.next()
-                members = self.s.struct_members(tok.struct or "")
-                member = next((x for x in (members or []) if m and x["name"].lower() == m.text.lower()), None)
-                if member is None:
-                    raise Unsupported("ArrayCount member")
-                tok = self.s.field_type(member, self.s.own)
-            else:
-                self.next()
-                r = self.field_expr(tok.cls, NONE, is_self=False, concrete=True)
-                if r.kind == "none":
-                    raise Unsupported("ArrayCount context")
-                tok = r
-        return tok
 
     # postfix: member access, arrays -----------------------------------------
 
