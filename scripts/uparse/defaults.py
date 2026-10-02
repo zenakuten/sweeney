@@ -692,13 +692,18 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
                 return UNKNOWN
             else:
                 return None
-        if cls is not None and hit[1].lower() != cls.lower():
-            chain = list(ctx.ancestry(hit[1]))
+        if cls is None:
+            return hit
+        unknown = False
+        for cand in ctx.export_all(pkg_name, hit[0]) or [hit]:
+            if cand[1].lower() == cls.lower():
+                return cand
+            chain = list(ctx.ancestry(cand[1]))
             if not chain or (chain[-1].super is None and chain[-1].name.lower() != "object"):
-                return UNKNOWN            # intrinsic classes: hierarchy unknown here
-            if not any(i.name.lower() == cls.lower() for i in chain):
-                return None
-        return hit
+                unknown = True            # intrinsic classes: hierarchy unknown here
+            elif any(i.name.lower() == cls.lower() for i in chain):
+                return cand
+        return UNKNOWN if unknown else None
 
     imp = DefaultsImporter(ctx, name, package, props, parent_values, enum_values,
                            struct_members, object_exists, own_structs)

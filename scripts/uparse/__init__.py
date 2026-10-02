@@ -231,7 +231,7 @@ def literal_problem(ctx, package: str, own: str, type_name: str, path: str) -> s
         if "." in path and pkg in ctx.visible:
             return "unknown"              # loaded, but we may just not know the class
     else:
-        hit = ctx.find_loaded(path)
+        hit = ctx.find_loaded(path, type_name)
         if hit == "ambiguous":
             return "unknown"
         if hit is not None:

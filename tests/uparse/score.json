@@ -8,9 +8,9 @@
   "probes.defaults": 1.0,
   "probes.line": 1.0,
   "probes.message": 1.0,
-  "probes.outcome": 0.9983,
+  "probes.outcome": 1.0,
   "probes.outcome.error": 1.0,
   "probes.outcome.hang": 1.0,
-  "probes.outcome.ok": 0.9974
+  "probes.outcome.ok": 1.0
  }
 }

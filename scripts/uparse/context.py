@@ -18,6 +18,37 @@ import sys
 from pathlib import Path
 
 
+# C++-only classes: (package, parent), from DECLARE_CLASS in the engine source.
+INTRINSIC_PARENTS = {
+    "field": ("Core", "Object"), "struct": ("Core", "Field"), "state": ("Core", "Struct"),
+    "class": ("Core", "State"), "function": ("Core", "Struct"), "const": ("Core", "Field"),
+    "enum": ("Core", "Field"), "property": ("Core", "Field"),
+    "objectproperty": ("Core", "Property"), "classproperty": ("Core", "ObjectProperty"),
+    "boolproperty": ("Core", "Property"), "intproperty": ("Core", "Property"),
+    "strproperty": ("Core", "Property"), "floatproperty": ("Core", "Property"),
+    "structproperty": ("Core", "Property"), "byteproperty": ("Core", "Property"),
+    "arrayproperty": ("Core", "Property"), "nameproperty": ("Core", "Property"),
+    "pointerproperty": ("Core", "Property"), "delegateproperty": ("Core", "Property"),
+    "textbuffer": ("Core", "Object"), "package": ("Core", "Object"),
+    "subsystem": ("Core", "Object"),
+    "viewport": ("Engine", "Player"), "netconnection": ("Engine", "Player"),
+    "font": ("Engine", "Object"), "primitive": ("Engine", "Object"),
+    "staticmesh": ("Engine", "Primitive"), "model": ("Engine", "Primitive"),
+    "mesh": ("Engine", "Primitive"), "lodmesh": ("Engine", "Mesh"),
+    "vertmesh": ("Engine", "LodMesh"), "skeletalmesh": ("Engine", "LodMesh"),
+    "convexvolume": ("Engine", "Primitive"), "fluidsurfaceprimitive": ("Engine", "Primitive"),
+    "terrainprimitive": ("Engine", "Primitive"), "meshinstance": ("Engine", "Primitive"),
+    "levelbase": ("Engine", "Object"), "level": ("Engine", "LevelBase"),
+    "pendinglevel": ("Engine", "Object"), "client": ("Engine", "Object"),
+    "audiosubsystem": ("Engine", "Subsystem"), "renderdevice": ("Engine", "Subsystem"),
+    "renderresource": ("Engine", "Object"), "indexbuffer": ("Engine", "RenderResource"),
+    "vertexstreambase": ("Engine", "RenderResource"), "vertexbuffer": ("Engine", "VertexStreamBase"),
+    "meshanimation": ("Engine", "Object"), "staticmeshinstance": ("Engine", "Object"),
+    "terrainsector": ("Engine", "Object"), "kmeshprops": ("Engine", "Object"),
+    "polys": ("Engine", "Object"),
+}
+
+
 class ClassInfo:
     def __init__(self, name: str, package: str, super_: str | None):
         self.name, self.package, self.super = name, package, super_
@@ -65,6 +96,7 @@ class Context:
         self.compiled_super: dict[str, str] = {}
         self._effective: dict[str, dict] = {}
         self._exports: dict[str, dict | None] = {}
+        self._export_all: dict = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
         self.struct_owners: dict[str, list] = {}  # every class declaring a struct of that name
         self.enum_owners: dict[str, list] = {}
@@ -240,6 +272,20 @@ class Context:
                 info = ClassInfo(name, path.split(".")[0], None)
                 self.classes[name.lower()] = info
                 self.by_package.setdefault((info.package.lower(), name.lower()), info)
+        # Their parents, from the C++ DECLARE_CLASS lines; a parent no package names
+        # is added too, so a hierarchy walk reaches Object.
+        for low, (pkg_name, parent) in INTRINSIC_PARENTS.items():
+            info = self.classes.get(low)
+            if info is None or info.super is not None or info.name.lower() == "object":
+                continue
+            info.super = parent
+            chain = parent
+            while chain and chain.lower() not in self.classes:
+                ppkg, pparent = INTRINSIC_PARENTS.get(chain.lower(), (pkg_name, "Object"))
+                p = ClassInfo(chain, ppkg, pparent)
+                self.classes[chain.lower()] = p
+                self.by_package.setdefault((ppkg.lower(), chain.lower()), p)
+                chain = pparent
 
     # ------------------------------------------------------------ queries
 
@@ -392,17 +438,38 @@ class Context:
         except Exception:
             self._exports[low] = None
             return None
-        out = {}
+        out, every = {}, {}
         for i, e in enumerate(pkg.exports):
             path = f"{found.stem}.{pkg.export_path(i)}"
-            out[path.lower()] = (path, pkg.class_of(e))
+            out.setdefault(path.lower(), (path, pkg.class_of(e)))
+            every.setdefault(path.lower(), []).append((path, pkg.class_of(e)))
         self._exports[low] = out
+        self._export_all[low] = every
         return out
 
-    def find_loaded(self, path: str):
+    def _is_a(self, cls: str, parent: str):
+        """True/False, or None when the hierarchy runs into an unknown class."""
+        if cls.lower() == parent.lower() or parent.lower() == "object":
+            return True
+        chain = list(self.ancestry(cls))
+        if any(i.name.lower() == parent.lower() for i in chain):
+            return True
+        if not chain or (chain[-1].super is None and chain[-1].name.lower() != "object"):
+            return None
+        return False
+
+    def export_all(self, package: str, path: str) -> list:
+        """Every export at that path: one name can be a mesh and its animation."""
+        if self.package_exports(package) is None:
+            return []
+        return self._export_all.get(package.lower(), {}).get(path.lower(), [])
+
+    def find_loaded(self, path: str, cls: str | None = None):
         """UCC's ANY_PACKAGE lookup over the loaded packages: `path` may start with a
         package, or with a group or class inside any loaded package
-        (Sounds.HeadShotted finds WSUTComp.Sounds.HeadShotted). (path, class),
+        (Sounds.HeadShotted finds WSUTComp.Sounds.HeadShotted). With `cls`, only
+        objects of that class or a subclass count (StaticFindObject's class filter:
+        XEffects.GibBotCalf is a class and a static mesh). (path, class),
         "ambiguous", or None."""
         if self.visible is None:
             return "ambiguous"
@@ -413,11 +480,12 @@ class Context:
             exports = self.package_exports(pkg)
             if not exports:
                 continue
-            for k, v in exports.items():
-                if k == want or k.endswith("." + want):
-                    hits.append(v)
-                elif "." in want and pkg == first and k.split(".")[-1] == leaf:
-                    hits.append(v)        # Pkg.Name, the object inside a group
+            for k in exports:
+                if k == want or k.endswith("." + want) or \
+                        ("." in want and pkg == first and k.split(".")[-1] == leaf):
+                    hits.extend(self.export_all(pkg, k))
+        if cls is not None:
+            hits = [h for h in hits if self._is_a(h[1], cls) is not False]
         hits = list(dict.fromkeys(hits))
         if not hits:
             return None

@@ -926,9 +926,11 @@ class Body:
             return T("object", cls=f"{self.s.package}.{self.s.own}")
         if low == "new":
             self.next()
+            parent_cls = f"{self.s.package}.{self.s.own}"
             if self.accept("("):
                 if not self.accept(")"):
-                    self.expr_required(T("object", cls=OBJECT_PATH), "'new' parent object")
+                    _, ptok = self.compile_expr(T("object", cls=OBJECT_PATH), "'new' parent object")
+                    parent_cls = ptok.cls or OBJECT_PATH
                     if self.accept(","):
                         self.expr_required(T("string"), "'new' name")
                         if self.accept(","):
@@ -937,9 +939,10 @@ class Body:
             code, cls_tok = self.compile_expr(T("object", cls=CLASS_PATH, meta=OBJECT_PATH), "'new'")
             if not cls_tok.meta:
                 raise self.error("'new': Invalid class")
-            info = self.s.ctx.info(cls_tok.meta)
-            if info is None or (info.within and info.within.split(".")[-1].lower() != "object"):
-                raise Unsupported("new: within")
+            within = self._within_of(cls_tok.meta)
+            if not self.ts.is_child(parent_cls, within):
+                raise self.error(f"'new': {cls_tok.meta.split('.')[-1]} objects must reside in "
+                                 f"{within.split('.')[-1]} objects, not {parent_cls.split('.')[-1]} objects")
             if self.accept("("):
                 self.require(")", "'new' constructor parameters")
             return T("object", cls=cls_tok.meta)
@@ -962,7 +965,7 @@ class Body:
                         return T("object", cls=CLASS_PATH, meta=target.path(), const=True)
                     # The constant takes its object's real class (Material'x' may be a
                     # Texture).
-                    hit = self.s.ctx.find_loaded(nxt.text)
+                    hit = self.s.ctx.find_loaded(nxt.text, info.name)
                     if hit is None or hit == "ambiguous":
                         raise Unsupported("object literal")
                     real = self.s.ctx.info(hit[1])
