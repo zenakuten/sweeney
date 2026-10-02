@@ -186,7 +186,7 @@ to match. Renaming the text naively breaks the things that must stay the same:
 | Renamed | Kept |
 |---|---|
 | `class'MyMod.Foo'`, `Texture'MyMod.Tex.X'` | `config(MyMod)` -- the ini file name; rename it and every player's settings reset |
-| `"MyMod.FooPickup"`, `DynamicLoadObject("MyMod.Foo", ...)` | display strings: `GameName="MyMod Clan Arena"`, URLs, key-bind labels |
+| `"MyMod.FooPickup"`, `DynamicLoadObject("MyMod.Foo", ...)` | display strings: `GameName="MyMod Deathmatch"`, URLs, key-bind labels |
 | `ScoreBoardType=MyMod.Foo` in defaultproperties | |
 | `#exec ... PACKAGE=MyMod`, `EditPackages=MyMod` | |
 

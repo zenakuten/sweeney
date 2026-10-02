@@ -22,7 +22,7 @@ that builds paths as "MyMod." $ Name) -- or the value of PACKAGE=. Every other u
 left alone, so there is no list of files or lines to maintain.
 
     uscript_rename.py MyMod MyMod MyMod_V30
-    uscript_rename.py WS3SPN WS3SPN WS3SPN_V30 --also WSUTComp=WSUTComp_V30
+    uscript_rename.py MyAddon MyAddon MyAddon_V30 --also MyMod=MyMod_V30
     uscript_rename.py MyMod MyMod MyMod_V30 --dry-run
 
 Rewritten: .uc and .uci (comments are left as they are), and .ini/.int, where
