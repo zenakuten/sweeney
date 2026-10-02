@@ -405,13 +405,18 @@ class Scope:
                     return int(str(f.get("value", "")).strip())
                 except ValueError:
                     raise Unsupported("const array size")
-        for info in self.ctx.ancestry(self.view.get("super")):
-            if name.lower() in info.consts:
-                try:
-                    return int(" ".join(info.consts[name.lower()]).strip())
-                except ValueError:
-                    raise Unsupported("const array size")
-        raise Unsupported("const array size")
+        # The const is the declaring class's: its own, or one it inherits.
+        chains = [self.ctx.ancestry(self.view.get("super"))]
+        if owner and owner.split(".")[-1].lower() != self.own.lower():
+            chains.insert(0, self.ctx.ancestry(owner.split(".")[-1]))
+        for chain in chains:
+            for info in chain:
+                if name.lower() in info.consts:
+                    try:
+                        return int(" ".join(info.consts[name.lower()]).strip())
+                    except ValueError:
+                        raise Unsupported("const array size")
+        raise Unsupported(f"const array size {name} in {owner}")
 
     # -------------------------------------------------------- lookup
 

@@ -649,6 +649,59 @@ subobject, an ancestor whose defaults don't decode. Also modelled:
 
 Still no wrong outcome predicted anywhere.
 
+**Third round.** The rest of the "don't know" list is now modelled:
+- `ArrayCount`, `new`, `super(Class)`, `super` inside states, `Outer`, protected access.
+- Dynamic arrays written `(a,b,,c)` in defaults.
+- The parents of the C++-only classes.
+
+Each item below was measured against UCC or read from its source:
+- **`within` lookup works on any context.** A member missing from a class is looked
+  up in its `within` class, with an `Outer` hop added. This applies to
+  `p_Anchor.FM.SetFilterInfo()`, not just to `self`.
+- **`super(Class)` takes any class.** UCC's "does not expand" check compares the class
+  with itself.
+- **`new` checks the parent object against the new class's `within`.**
+- **Overrides compare types, not just counts.** UCC runs `MatchesType` with identity
+  on every parameter, then on the return value (an out parameter). Only then does it
+  check the specifiers. The error is reported on the line of the function's `{`.
+- **Structs match by owner and name.** `Seed_X.S` is not `X.S`.
+- **One path can name several exports.** `XEffects.GibBotCalf` is both a class and a
+  static mesh. A mesh and its animation can share a name too. Lookups filter by the
+  class the literal or property asks for, as `StaticFindObject` does.
+- **Imported packages are only partly loaded.** Only EditPackages, deps and the
+  package being built are loaded whole. Of the packages they import, only the objects
+  their import tables name are known to be in memory. UCC rejects
+  `Sound'GeneralAmbience.beep10'` even though XGame imports GeneralAmbience. Anything
+  else in such a package is "don't know", because one imported object can pull in
+  others: a SoundGroup pulls in its Sounds.
+- **`dependson()` on a class that isn't loaded crashes UCC** with
+  `General protection fault!`.
+- **A missing `#include` file stops pass 1 at its line.** The message is
+  `include file <path> not found`.
+- **A `Begin Object` whose class isn't loaded creates nothing.** Its lines set the
+  enclosing object's properties. A later `Class'Path'` reference to it is an
+  `unresolved cast` when the class is missing, and an `unresolved reference`
+  otherwise.
+- **A package's classes see each other.** Before this, a two-file package got false
+  `Unrecognized type` errors. `predict()` now overlays the package's source views and
+  builds parents first. A subclass starts from its source parent's predicted defaults.
+
+Probe suites can now carry extra files per case. The new `multifile` suite has 15
+cases with goldens recorded by UCC. A `packages` section predicts each local mod as
+one whole build.
+
+| | second round | now |
+|---|---|---|
+| probe outcomes | 603/604 | **619/619** |
+| probe errors, exact line and message | 194/194 | **203/203** |
+| seed classes UCC accepts, predicted ok | 2598/2986 | **2984/2986 (99.9%)** |
+| seed classes UCC rejects, predicted error | 445/507 | **507/507**, 505 exact |
+| local mods as whole builds, predicted ok | - | **4/4** |
+| corpus files still "don't know" | 251 | **1** |
+
+Still no wrong outcome predicted anywhere. The two seeds UCC accepts that remain
+"don't know" use a Sound and a Material from a package that is only partly loaded.
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,

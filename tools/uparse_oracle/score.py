@@ -16,6 +16,8 @@ Sections, each a set of agreement rates in [0, 1]:
            compiled class, by field names and kinds ("names") and in full ("full")
   seeds    seeds.json, UCC's verdict on every corpus class built alone: same outcome,
            first error line and message
+  packages each local mod predicted as one build (every class, its includes, the
+           deps its seeds needed); they all compile, so the answer should be "ok"
 
 Two ratchet files, so the repo only carries numbers anyone can reproduce:
 
@@ -50,7 +52,7 @@ from sandbox import default_root, sweeney_config  # noqa: E402
 REPO_SCORE = REPO / "tests" / "uparse" / "score.json"
 LOCAL_SCORE = default_root() / "score-local.json"
 LOCAL_CORPUS = default_root() / "corpus-local.txt"
-SECTIONS = ("probes", "hang", "corpus", "decl", "seeds")
+SECTIONS = ("probes", "hang", "corpus", "decl", "seeds", "packages")
 
 # Metrics only reproducible on this machine (local mods, seeds) carry this mark and
 # stay out of the repo ratchet.
@@ -309,6 +311,29 @@ def score_seeds(t: Tally) -> None:
         compare_outcome(t, "seeds", f"{it['package']}/{src.name}", len(seed_src), ucc, pred)
 
 
+def score_packages(t: Tally) -> None:
+    deps: dict[str, list] = {}
+    manifest = default_root() / "seeds.json"
+    if manifest.exists():
+        for it in json.loads(manifest.read_text()):
+            for d in it.get("deps", []):
+                if d not in deps.setdefault(it["package"].lower(), []):
+                    deps[it["package"].lower()].append(d)
+    for pkg, files in local_packages():
+        if not (reference_root(LOCAL) / "System" / f"{pkg}.u").exists():
+            continue
+        pdir = files[0].parent.parent if files[0].parent.name.lower() == "classes" else files[0].parent
+        srcs = {f.name: f.read_bytes() for f in files}
+        for inc in files[0].parent.rglob("*.uci"):
+            srcs[str(inc.relative_to(pdir))] = inc.read_bytes()
+        pred = uparse.predict({pkg: srcs}, deps.get(pkg.lower(), []))
+        ok = pred.outcome == "ok"
+        t.add(f"packages.{LOCAL}", ok)
+        if not ok:
+            msg = template(pred.errors[0].message) if pred.errors else ""
+            t.diverge("packages", (pred.outcome, msg), (len(srcs), pkg))
+
+
 def _seed_error(s: str) -> dict:
     """seeds.json keeps errors as 'File.uc(N) : message'."""
     m = re.match(r"^(.*?)\((\d+)\) : (.*)$", s)
@@ -363,6 +388,8 @@ def main() -> int:
         score_decl(t, local_packages(), LOCAL)
     if "seeds" in only or "hang" in only:
         score_seeds(t)
+    if "packages" in only:
+        score_packages(t)
     secs = time.monotonic() - t0
 
     rates = t.rates()
