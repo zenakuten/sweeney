@@ -82,8 +82,23 @@ source and in shipped mod code that builds under 3374.
 
 ### No ternary operator
 
-`a ? b : c` is not supported and hangs analysis. There are zero uses in the whole
-engine source. Use `if`/`else` into a local.
+`a ? b : c` is not supported. There are zero uses in the whole engine source. Use
+`if`/`else` into a local.
+
+It is an ordinary compile error, **not a hang**, but the message never mentions `?`, so
+it reads like a different problem. It depends on where the `?` sits:
+
+| Context | UCC says |
+|---|---|
+| `return b ? 1 : 0;` | `Type mismatch in 'Return'` |
+| `x = b ? 1 : 0;` | `Type mismatch in '='` |
+| `Log(b ? "a" : "b");` | `Call to 'Log': Bad '?' or missing ')'` |
+| `if (b ? x : y)` | `Missing ')' in 'If'` |
+| `A[b ? 0 : 1]` | `Type mismatch in array index` |
+
+Measured across 14 contexts on the retail 32-bit UCC and two 64-bit 3374 builds, using
+`tools/uparse_oracle/sandbox.py`; none hung. (Earlier versions of this skill said it
+hangs analysis. That was never measured, and it is wrong.)
 
 ### Enum properties silently ignore integers
 

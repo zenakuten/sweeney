@@ -139,7 +139,8 @@ run with a short `--timeout`. 10s is enough here, where a real build takes about
   `--keep-u` saves the `.u` for oracles 3/4.
 - **Measured already:** the ternary is an *error* on this UCC, not a hang. `return b ?
   1 : 0;` gives `Type mismatch in 'Return'`, and other contexts give `Bad '?'` or
-  `Missing ')'`. The skill's "hangs analysis" claim needs re-checking against this.
+  `Missing ')'`. The retail 32-bit UCC agrees. The skill's "hangs analysis" claim has
+  been corrected.
 - **Cache.** Results keyed by `sha256(sources) + ucc_id` in a sqlite file outside the
   repo. Mutation produces many duplicates, and UCC time is the bottleneck.
 - **One error per run.** UCC stops at the first error in a class, so error probes are one

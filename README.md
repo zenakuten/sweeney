@@ -27,8 +27,7 @@ error, which is exactly why this one hides.
 A handful of others, all silent:
 
 - A comment containing a backslash **and** an unbalanced quote hangs the compiler on
-  `Analyzing...` — forever, with no message. So does the ternary operator, which UE2
-  does not support.
+  `Analyzing...` — forever, with no message.
 - `.uc` files are Latin-1. UCC is not Unicode-aware.
 - `#exec TEXTURE IMPORT` flips every TGA vertically, unconditionally, ignoring the
   descriptor byte. Seamless textures still tile, so only directional ones look wrong.
@@ -49,8 +48,9 @@ function it read, so you can check it.
 ## Tools
 
 **`scripts/uccheck.py`** — catches, before you build, the traps that produce no compiler
-message: file encoding, comments that hang the tokenizer, the ternary operator, and enum
-properties given integers. It resolves property types through the class hierarchy, so a
+message: file encoding, comments that hang the tokenizer, and enum properties given
+integers. It also flags the ternary operator, which UCC rejects with a message that
+never mentions the `?`. It resolves property types through the class hierarchy, so a
 name that is an enum on one class and a plain `byte` on another is not misreported.
 
 Calibrated to produce **zero errors across the 2432-file engine source and 472 mod files

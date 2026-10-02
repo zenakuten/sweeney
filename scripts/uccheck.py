@@ -15,7 +15,9 @@ Checks
               A comment that leaves a string literal open. UCC tracks strings
               inside comments, so an unbalanced quote opens one that never
               closes, and analysis runs off the end of the file.
-  ternary     `a ? b : c` is not supported by UCC and hangs analysis.
+  ternary     `a ? b : c` is not supported by UCC. It is a compile error, not a
+              hang, but the message never mentions the `?` (e.g. "Type mismatch
+              in 'Return'"), so it is flagged here by name.
   enum-default
               `Prop=2` in defaultproperties where Prop is an enum. Silently
               discarded -- the property keeps its inherited default. Use the
@@ -261,8 +263,9 @@ def check_ternary(path: Path, text: str, regions: list[int]) -> list[Finding]:
             out.append(
                 Finding(path, line_of(text, i), "ternary",
                         "'?' in code -- the ternary operator",
-                        "UCC does not support 'a ? b : c' and hangs on it. Use if/else "
-                        "into a local")
+                        "UCC does not support 'a ? b : c'. It fails with an error that "
+                        "does not mention the '?', such as \"Type mismatch in 'Return'\". "
+                        "Use if/else into a local")
             )
     return out
 

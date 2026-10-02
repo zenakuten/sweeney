@@ -79,8 +79,9 @@ Declare the accumulator `float`, or compute the value fresh each iteration.
 
 ## "The compiler just sits there"
 
-See the SKILL for the three triggers: a comment that leaves a quote open, the ternary
-operator, and multi-byte UTF-8. Diagnose with:
+See the SKILL for the two triggers: a comment that leaves a quote open, and
+multi-byte UTF-8. (The ternary operator is often blamed, but it is an ordinary compile
+error with a misleading message, not a hang.) Diagnose with:
 
 ```
 cd System && ucc make          # timeout 60 wine UCC.exe make, on Linux
