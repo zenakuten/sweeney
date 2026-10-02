@@ -194,6 +194,7 @@ class DeclParser:
         self.rep_conditions: list[tuple[int, int]] = []
         self.rep_statements: list[dict] = []
         self.error: DeclError | None = None
+        self.missing_includes: set = set()
 
     # ------------------------------------------------------------ top level
 
@@ -276,7 +277,9 @@ class DeclParser:
             # Measured: reported on the line after the '#'.
             raise DeclError(f"Unrecognized compiler directive {tok.text}", hash_tok.line + 1, c.i - 1)
         if c.peek() is not None and c.peek().kind == RAW:
-            c.next()
+            raw = c.next()
+            if w == "include" and raw.text.strip().lower() in self.missing_includes:
+                raise DeclError(f"include file {raw.text.strip()} not found", raw.line, c.i - 1)
 
     def _class_header(self) -> None:
         c = self.c
@@ -1007,11 +1010,12 @@ class DeclParser:
 
 
 def parse_declarations(tokens: list[Token], class_name_hint: str = "",
-                       eof_line: int = 1) -> dict:
+                       eof_line: int = 1, missing_includes: set | None = None) -> dict:
     """The class's declarations. A syntax error stops the parse; the partial view is
     returned with the error under "_error" (a DeclError), so deferred checks on the
     fields before it can still run."""
     p = DeclParser(tokens, class_name_hint, eof_line)
+    p.missing_includes = missing_includes or set()
     view = p.parse()
     view["_error"] = p.error
     return view

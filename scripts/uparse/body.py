@@ -645,6 +645,8 @@ class Body:
         tok = self.next()
         need_semicolon = True
         w = tok.text.lower() if tok.kind == IDENT else None
+        if tok.kind == SYMBOL and tok.text == "#":
+            raise Unsupported("directive in a body")
         if w in ("local", "const"):
             # Declared in the first pass (a const may sit in a body); skip it.
             while self.peek() is not None and not self.at(";"):

@@ -243,29 +243,50 @@ def import_class(src: bytes | str) -> Imported:
     return Imported(script, defaults, cpptext, class_name, base_name, deps, None)
 
 
-def expand_includes(script_text: str, package_dir: Path | None, depth: int = 0) -> str:
+def include_reader(package_dir: Path):
+    """Reads an include path relative to package_dir, ignoring case as Windows does;
+    None when there's no such file."""
+    def read(rel: str):
+        p = package_dir
+        for part in [x for x in rel.replace("\\", "/").split("/") if x]:
+            q = p / part
+            if not q.exists() and p.is_dir():
+                q = next((c for c in p.iterdir() if c.name.lower() == part.lower()), q)
+            p = q
+        try:
+            return decode(p.read_bytes())
+        except OSError:
+            return None
+    return read
+
+
+def expand_includes(script_text: str, package_dir, depth: int = 0,
+                    missing: set | None = None) -> str:
     """Splice `#include <file>` lines the way the compiler does: the line is replaced
     by the file's text up to `defaultproperties` (case-sensitive, as UCC searches).
     The path is relative to the package directory, where UCC compiles from. The
-    included text is inserted after import, so the importer's scan never sees it."""
+    included text is inserted after import, so the importer's scan never sees it.
+    package_dir is a directory or a reader (rel path -> text or None). A file that
+    isn't there leaves its line, and its path goes in `missing` (lowercased)."""
     if package_dir is None or depth > 8 or "#include" not in script_text.lower():
         return script_text
+    read = package_dir if callable(package_dir) else include_reader(Path(package_dir))
     out = []
     for line in script_text.split("\r\n"):
         s = line.strip()
         if s[:1] == "#" and s[1:].lstrip().lower().startswith("include"):
             rel = s[1:].lstrip()[len("include"):].strip().split("//")[0].strip()
-            target = package_dir / rel.replace("\\", "/")
-            try:
-                text = decode(target.read_bytes())
-            except OSError:
+            text = read(rel)
+            if text is None:
                 out.append(line)              # UCC: "include file ... not found"
+                if missing is not None:
+                    missing.add(rel.lower())
                 continue
             k = text.find("defaultproperties")
             if k >= 0:
                 text = text[:k]
             text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
-            out.append(expand_includes(text, package_dir, depth + 1).rstrip("\r\n"))
+            out.append(expand_includes(text, read, depth + 1, missing).rstrip("\r\n"))
             continue
         out.append(line)
     return "\r\n".join(out)

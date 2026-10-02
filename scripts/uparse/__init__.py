@@ -44,17 +44,19 @@ class Analysis:
 
 
 def analyze(name: str, src: bytes, package: str | None = None, context=None,
-            path=None, visible=None) -> Analysis:
+            path=None, visible=None, includes=None) -> Analysis:
     """Run the stages in UCC's order -- importer, lexer, declarations, the checks
     that need other classes -- and keep the first error UCC would hit. `visible`
-    limits other classes to the packages this build loads (None: everything known)."""
+    limits other classes to the packages this build loads (None: everything known).
+    `includes` reads #include paths (rel path -> text or None) when there's no `path`
+    to find them from; with neither, a class that includes a file is "don't know"."""
     from .context import default_context
     ctx = context or default_context()
     with ctx.only(visible):
-        return _analyze(name, src, package, ctx, path)
+        return _analyze(name, src, package, ctx, path, includes)
 
 
-def _analyze(name, src, package, context, path) -> Analysis:
+def _analyze(name, src, package, context, path, includes=None) -> Analysis:
     from pathlib import Path
     from .importer import import_class, expand_includes
     from .lexer import tokenize_partial
@@ -79,13 +81,16 @@ def _analyze(name, src, package, context, path) -> Analysis:
         return Analysis(error=Diag(name, 0, "General protection fault!"))
 
     text = im.script_text()
+    missing: set = set()
+    reader = includes
     if path is not None:
         p = Path(path)
-        pkg_dir = p.parent.parent if p.parent.name.lower() == "classes" else p.parent
-        text = expand_includes(text, pkg_dir)
+        reader = p.parent.parent if p.parent.name.lower() == "classes" else p.parent
+    includes_unknown = reader is None and _INCLUDE_LINE.search(text) is not None
+    text = expand_includes(text, reader, missing=missing)
     tokens, lex_error = tokenize_partial(text)
     eof_line = text.count("\r\n") + 1
-    view = parse_declarations(tokens, stem, eof_line)
+    view = parse_declarations(tokens, stem, eof_line, missing)
     syntax = view.pop("_error")
 
     ctx = context or default_context()
@@ -152,12 +157,16 @@ def _analyze(name, src, package, context, path) -> Analysis:
     if not defaults_checked and unknown is None:
         from . import defaults as _d
         unknown = f"defaults: {getattr(_d, 'last_unknown_reason', None)}"
-    return Analysis(view=resolved, defaults=stored, compiled=bodies_ok and defaults_checked,
+    if includes_unknown and unknown is None:
+        unknown = "include file: nowhere to look"
+    return Analysis(view=resolved, defaults=stored,
+                    compiled=bodies_ok and defaults_checked and not includes_unknown,
                     unknown=unknown)
 
 
 import re as _re
 _EXEC_LINE = _re.compile(r"^[ \t]*#[ \t]*exec\b", _re.I | _re.M)
+_INCLUDE_LINE = _re.compile(r"^[ \t]*#[ \t]*include\b", _re.I | _re.M)
 
 
 def _body_spans(view: dict) -> list:
@@ -277,18 +286,33 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     ctx = default_context(prefer_compiled=True)
     visible = _stock_packages(ctx) + list(deps or []) + list(packages)
     for pkg, files in packages.items():
+        # The package directory holds only these files: .uc under Classes, anything
+        # else (an include) at the path its key gives, relative to the package.
+        extra = {k.replace("\\", "/").lower(): v for k, v in files.items()
+                 if not k.lower().endswith(".uc")}
+
+        def read(rel, extra=extra):
+            v = extra.get(rel.replace("\\", "/").lower())
+            return None if v is None else _decode_text(v)
         for name, src in files.items():
-            a = analyze(name, src, package=pkg, context=ctx, visible=visible)
+            if not name.lower().endswith(".uc"):
+                continue
+            a = analyze(name, src, package=pkg, context=ctx, visible=visible, includes=read)
             if a.hang_line is not None:
                 return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
             if a.error is not None and first_error is None:
                 first_error = a.error
-            if len(files) == 1:
+            if sum(1 for k in files if k.lower().endswith(".uc")) == 1:
                 defaults = a.defaults
             all_ok = all_ok and a.compiled
     if first_error:
         return Prediction("error", [first_error])
     return Prediction("ok" if all_ok else "unknown", defaults=defaults)
+
+
+def _decode_text(b: bytes) -> str:
+    from .importer import decode
+    return decode(b).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
 
 
 def check_file(name: str, src: bytes, path=None) -> list[Diag] | None:
