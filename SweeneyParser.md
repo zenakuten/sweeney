@@ -134,8 +134,18 @@ run with a short `--timeout`. 10s is enough here, where a real build takes about
   The ini is the install's `UT2004.ini` with EditPackages replaced by the stock list
   from `Default.ini`, then any dependencies, then the probe packages. The install's
   `UT2004.ini` carries mod entries, so it can't supply the list. Diagnostics come back
-  as `Probe.uc(3) : Error, Missing ';' before 'function'`, followed by a
-  `Failure - N error(s)` summary line in the same format, which gets filtered out.
+  in three formats, and the parser has to reproduce all three:
+  - `Probe.uc(3) : Error, Missing ';' before 'function'`: ordinary compile errors,
+    followed by a `Failure - N error(s)` summary line in the same format, which gets
+    filtered out
+  - a bare line before `Compile aborted due to errors.`: errors raised while importing
+    `defaultproperties`, e.g. `Bindings::ImportText: Bad termination in: ...` or
+    `ObjectProperty X.Y: unresolved reference to ...`. These have no line number, which
+    is recorded as line 0
+  - a bare line before `History:` / `Exiting due to error`: fatal errors such as
+    `Superclass X of class Y not found`, printed straight after `Analyzing...` with no
+    line break in between
+
   `--keep-u` saves the `.u` for oracles 3/4.
 - **Measured already:** the ternary is an *error* on this UCC, not a hang. `return b ?
   1 : 0;` gives `Type mismatch in 'Return'`, and other contexts give `Bad '?'` or
@@ -145,10 +155,28 @@ run with a short `--timeout`. 10s is enough here, where a real build takes about
   repo. Mutation produces many duplicates, and UCC time is the bottleneck.
 - **One error per run.** UCC stops at the first error in a class, so error probes are one
   class with one fault. Ok-probes can be batched many classes per package.
-- **Seeds.** Mutants need classes that compile standalone in a probe package. Find them
-  automatically: try every corpus class alone (rewritten to package `Probe`) and keep
-  the ones UCC accepts. Expect hundreds, mostly non-native engine leaf classes and mod
-  classes.
+- **Seeds.** Mutants need classes that compile standalone in a probe package.
+  *Built:* `tools/uparse_oracle/seeds.py`. It renames each corpus class `Foo` to
+  `Seed_Foo`, including the class's unqualified references to itself in code and
+  `defaultproperties`, drops `#exec` lines, and builds each one alone. A mod whose
+  `.u` is built is loaded as a dependency. Results go to `~/.sweeney/oracle/seeds.json`
+  and the accepted sources to `~/.sweeney/oracle/seeds/`.
+
+  | corpus | seeds | rejected |
+  |---|---|---|
+  | engine source | 2302 / 2432 | 129 |
+  | mods in this install | 684 / 1062 | 378 |
+
+  The full corpus takes 1.5 minutes on 24 sandboxes, or 12s when cached. Native classes
+  seed fine: the renamed class keeps `native` and UCC never checks for the C++.
+  Rejections are mostly a mod's classes referring to its own unbuilt package, or code
+  passing `Self` where another class expects the original type. Each rejection is real
+  code with UCC's verdict attached, which makes it probe data too.
+- **The engine source is a dump, not Epic's files.** Some `defaultproperties` strings
+  have unescaped quotes (`Plain="""` in `PlaylistParserBase`) that the real source
+  can't have had, so a few engine classes don't compile exactly as written. The
+  positive-corpus oracle has to allow for this: "every engine file parses clean" is
+  the target only for code, not for `defaultproperties` text.
 - **Scoreboard** (`score.py`), run after every change:
   - corpus: files parsed clean / total
   - probes: outcome-class agreement, line agreement, message agreement
@@ -286,7 +314,7 @@ Guards for unattended running:
 1. ~~Settle the C++ decision above.~~ Done.
 2. ~~Build `sandbox.py` and time a single probe build.~~ Done: ~1s per build, ~800/min
    in parallel.
-3. Run the seed finder over the engine corpus and WSUTComp.
+3. ~~Run the seed finder over the engine corpus and WSUTComp.~~ Done: 2986 seeds.
 4. Extend `ue2.py` into `reflect.py` far enough to dump one compiled class's properties
    and functions, and diff it by hand against its `.uc`.
 5. Stand up `score.py` on an empty parser and commit the baseline.

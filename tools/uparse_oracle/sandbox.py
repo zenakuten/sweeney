@@ -54,7 +54,7 @@ IS_WINDOWS = os.name == "nt"
 
 ERROR_RE = re.compile(r"^(?P<file>.*?\.uc)\((?P<line>\d+)\) : (?P<kind>Error|Warning), (?P<msg>.*)$")
 SUMMARY_RE = re.compile(r"^(Failure|Success) - \d+ error\(s\), \d+ warning\(s\)$")
-STAGE_RE = re.compile(r"^(Parsing|Compiling) (\w+)")
+STAGE_RE = re.compile(r"^(?:Parsing|Compiling|Importing Defaults for) (\w+)")
 
 
 def sweeney_config() -> dict:
@@ -152,17 +152,29 @@ class Result:
 
 def parse_output(text: str) -> tuple[list[Diag], list[Diag], str]:
     errors, warnings, stage = [], [], ""
+    stage_class = ""
+    unprefixed = ""     # last line that was neither progress nor a File.uc(N) diagnostic
+    aborted = False
     # UCC overwrites progress with bare CRs; treat them as line breaks.
     for raw in text.replace("\r", "\n").split("\n"):
         line = raw.strip()
-        if not line or "fixme:" in line:
+        # Progress text and a fatal message can share a line: "Analyzing...Superclass X
+        # of class Y not found".
+        if line.startswith("Analyzing..."):
+            line = line[len("Analyzing..."):].strip()
+        if not line or "fixme:" in line or line.startswith(("---", "History:")):
             continue
         m = STAGE_RE.match(line)
         if m:
-            stage = f"{m.group(1)} {m.group(2)}"
+            stage, stage_class = line, m.group(1)
+            continue
+        if line in ("Compile aborted due to errors.", "Exiting due to error"):
+            aborted = True
             continue
         m = ERROR_RE.match(line)
         if not m:
+            if not SUMMARY_RE.match(line):
+                unprefixed = line
             continue
         msg = m.group("msg")
         if SUMMARY_RE.match(msg):
@@ -170,6 +182,12 @@ def parse_output(text: str) -> tuple[list[Diag], list[Diag], str]:
         d = Diag(Path(m.group("file").replace("\\", "/")).name, int(m.group("line")),
                  m.group("kind"), msg)
         (errors if d.kind == "Error" else warnings).append(d)
+    # Some errors are bare lines with no File.uc(N) prefix: those raised importing
+    # defaultproperties ("Foo::ImportText: Bad termination in: ...") and fatal ones
+    # that end the run ("Superclass X of class Y not found", then "Exiting due to
+    # error"). Line 0 means UCC gave none.
+    if aborted and not errors and unprefixed:
+        errors.append(Diag(f"{stage_class}.uc" if stage_class else "", 0, "Error", unprefixed))
     return errors, warnings, stage
 
 
