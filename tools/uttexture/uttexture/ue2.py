@@ -263,6 +263,20 @@ def _tag_size(r, code):
     return r.i32()
 
 
+def _array_index(r):
+    """A tagged property's array index -- NOT a compact index, though the two agree
+    below 64. The top bits pick the width: 0xxxxxxx is one byte, 10xxxxxx two, and
+    11xxxxxx four, big-end first. Reading it as a compact index desyncs at element 64
+    and loses every property after it (a class's long Bindings array, say)."""
+    b = r.u8()
+    if not b & 0x80:
+        return b
+    if b & 0xC0 == 0x80:
+        return ((b & 0x7F) << 8) | r.u8()
+    c, d, e = r.u8(), r.u8(), r.u8()
+    return ((b & 0x3F) << 24) | (c << 16) | (d << 8) | e
+
+
 class _P:
     """Raw property record: keeps the bytes so callers decode what they need."""
 
@@ -305,7 +319,7 @@ def _read_properties(pkg, r):
             out.setdefault(name, []).append(_P(kind, None, 0, bytes([1 if is_array else 0])))
             continue
         size = _tag_size(r, code)
-        index = r.index() if is_array else 0
+        index = _array_index(r) if is_array else 0
         raw = bytes(r.d[r.p:r.p + size])
         r.p += size
         out.setdefault(name, []).append(_P(kind, struct_name, index, raw))
