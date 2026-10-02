@@ -60,7 +60,7 @@ test. Proposed resolution, which keeps the rule intact:
   quirk branch, the order of the passes. They turn each one into a **probe case**.
 - **The evidence is the UCC result, recorded in the repo.** Every behaviour the parser
   implements is pinned by a probe whose expected outcome came from running UCC. Anyone
-  with a UT2004 install can re-record it with `uparse-oracle --refresh`. That's exactly
+  with a UT2004 install can re-record it with `uparse_oracle --refresh`. That's exactly
   the "stated, reproducible observation" `AGENTS.md` asks for.
 - No C++ is copied, no C++ identifiers or line references go in comments, and no code
   is structured by porting function by function. The parser is written against the
@@ -96,7 +96,7 @@ scripts/uparse/
 tests/uparse/
   probes/        curated .uc cases + recorded UCC outcome (golden)
   corpus.txt     paths of positive corpora (resolved via ~/.sweeney/config.json)
-tools/uparse-oracle/
+tools/uparse_oracle/
   sandbox.py     N throwaway build sandboxes, run UCC with a time limit, parse output
   mutate.py      mutant and grammar-guided generators
   reflect.py     .u reflection dump (oracle 3), extending ue2.py
@@ -112,14 +112,34 @@ that order, so getting it wrong shows up as line mismatches.
 
 Everything else depends on it, so it gets the most care.
 
-- **Sandboxes.** Each one is a directory with a `System/` (symlinks to the install's
-  `UCC.exe`, `*.dll`, `*.u`, plus its own `make.ini` and a `UT2004.ini` copy) and a
-  probe package dir. Run 8–16 in parallel under the same wine prefix. Measure first;
-  wineserver contention may cap it. Put sandboxes on disk, **not `/tmp`** (it's tmpfs).
-- **Run.** `rm Probe.u Probe.ucl; wine UCC.exe make -ini=Z:\...\make.ini -silentbuild`,
-  using Windows paths. Time limit 30s, with `timeout` → `hang`. Capture stdout and parse
-  `Error:` / `Warning:` lines into `(file, line, message)`. Keep the `.u` on success for
-  oracles 3/4.
+*Built:* `tools/uparse_oracle/sandbox.py` (`init`, `run`, `bench`, `selftest`,
+`clean`; `Oracle.ask` / `ask_many` from Python). Measured on the 64-bit 3374 UCC under
+wine, 32 cores:
+
+| sandboxes | mean build | throughput |
+|---|---|---|
+| 1 | 0.85s | ~70/min |
+| 8 | 1.08s | ~440/min |
+| 16 | 1.22s | ~770/min |
+| 24 | 1.52s | ~930/min |
+
+A hang costs the time limit twice (it's re-tried at double), so hang-heavy suites should
+run with a short `--timeout`. 10s is enough here, where a real build takes about 1s.
+
+- **Sandboxes** live in `~/.sweeney/oracle/sb-NN/`. `System/` symlinks every install
+  file except `*.ini` (copied, since UCC needs them and may write them) and `*.log`
+  (skipped), and the content dirs are symlinked too. Nothing is written into the
+  install. Symlinks fall back to hardlinks, then copies, on Windows.
+- **Run.** `wine ./UCC.exe make -ini=Z:\...\sweeney-make.ini` with `WINEDEBUG=-all`.
+  The ini is the install's `UT2004.ini` with EditPackages replaced by the stock list
+  from `Default.ini`, then any dependencies, then the probe packages. The install's
+  `UT2004.ini` carries mod entries, so it can't supply the list. Diagnostics come back
+  as `Probe.uc(3) : Error, Missing ';' before 'function'`, followed by a
+  `Failure - N error(s)` summary line in the same format, which gets filtered out.
+  `--keep-u` saves the `.u` for oracles 3/4.
+- **Measured already:** the ternary is an *error* on this UCC, not a hang. `return b ?
+  1 : 0;` gives `Type mismatch in 'Return'`, and other contexts give `Bad '?'` or
+  `Missing ')'`. The skill's "hangs analysis" claim needs re-checking against this.
 - **Cache.** Results keyed by `sha256(sources) + ucc_id` in a sqlite file outside the
   repo. Mutation produces many duplicates, and UCC time is the bottleneck.
 - **One error per run.** UCC stops at the first error in a class, so error probes are one
@@ -221,7 +241,7 @@ Agent roles, each a prompt plus a scope:
 | Role | Writes | Reads |
 |---|---|---|
 | probe author | `tests/uparse/probes/` | compiler source (locally), language docs, UCC results |
-| generator | `tools/uparse-oracle/mutate.py` | grammar, divergence report |
+| generator | `tools/uparse_oracle/mutate.py` | grammar, divergence report |
 | fixer | one or two `scripts/uparse/*.py` modules | its cluster, probes |
 | oracle maintainer | `reflect.py`, `bytecode.py` | package format docs, `ue2.py` |
 | reviewer | nothing, rejects merges | diff, scoreboard, the C++ rule |
@@ -263,7 +283,8 @@ Guards for unattended running:
 ## First concrete steps
 
 1. ~~Settle the C++ decision above.~~ Done.
-2. Build `sandbox.py` and time a single probe build. That number sizes everything else.
+2. ~~Build `sandbox.py` and time a single probe build.~~ Done: ~1s per build, ~800/min
+   in parallel.
 3. Run the seed finder over the engine corpus and WSUTComp.
 4. Extend `ue2.py` into `reflect.py` far enough to dump one compiled class's properties
    and functions, and diff it by hand against its `.uc`.
