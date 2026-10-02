@@ -179,13 +179,23 @@ def score_corpus(t: Tally, packages, label: str) -> None:
                 t.diverge("corpus", (label, kind, first), (f.stat().st_size, f"{pkg}/{f.name}"))
 
 
+def _norm_value(k: str, v, kind: str) -> str:
+    """A field attribute for comparison. Names compare without case: UCC stores a
+    name in whichever spelling its global name table saw first, which says nothing
+    about the source. A const's value is source text and keeps its case."""
+    if k == "flags":
+        v = sorted(v)
+    s = json.dumps(v, sort_keys=True)
+    return s if (kind == "Const" and k == "value") else s.lower()
+
+
 def _norm_field(f: dict, full: bool) -> tuple:
     base = (f["kind"], f["name"].lower())
     if not full:
         return base
-    extra = tuple((k, json.dumps(f[k], sort_keys=True)) for k in sorted(f)
+    extra = tuple((k, _norm_value(k, f[k], f["kind"])) for k in sorted(f)
                   if k not in ("name", "kind", "fields", "script_size", "rep_offset"))
-    sub = tuple(_norm_field(g, True) for g in f.get("fields", []))
+    sub = tuple(sorted(_norm_field(g, True) for g in f.get("fields", [])))
     return base + extra + (sub,)
 
 
@@ -215,7 +225,7 @@ def score_decl(t: Tally, packages, label: str) -> None:
             want = compiled.get(f.stem.lower())
             if want is None:
                 continue                      # source with no compiled class: skip
-            got = uparse.declarations(f.name, f.read_bytes())
+            got = uparse.declarations(f.name, f.read_bytes(), path=f)
             for level in ("names", "full"):
                 full = level == "full"
                 ok = got is not None and _norm_class(got, full) == _norm_class(want, full)

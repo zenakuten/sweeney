@@ -425,6 +425,72 @@ Measured, all against UCC:
 What P1 can't see is any error a parser would raise before the lexer gets there.
 P2 starts on that.
 
+## P2: declarations
+
+`scripts/uparse/decl.py` is UCC's first pass: the class header, `var`/`enum`/`struct`/
+`const`, function, event, delegate and operator signatures with their `local`s, states
+with `ignores`, and the replication block. Bodies are skipped. `context.py` indexes
+every other class (from source where we have it, else from the compiled packages,
+which is what UCC loads; intrinsic classes like `Font` come from import tables).
+`resolve.py` turns the parse into the compiled shape: types, paths, inheritance.
+`#include` is spliced the way the compiler does it.
+
+**Scoreboard:**
+
+| | names | full |
+|---|---|---|
+| engine (2222 classes) | 97.4% | 94.1% |
+| local mods (496) | 99.8% | **99.2%** |
+
+The mods compile from exactly the source here. Their 4 misses are stale compiled
+packages: `UT2004MCP.u` predates its source, and `WS3SPN.u` was built against an older
+`WSUTComp.u`. The engine misses are almost all drift between the v3369 dump and the
+3374 packages, i.e. members 3374 added or changed (`DrawWeaponInfo3`, `TidyUp`,
+`PROPNUM` 4 to 5). `decldiff.py --summary` lists them.
+
+**What UCC stores, measured from the compiled packages**, and now reproduced:
+
+- **Class flags.** A class inherits only from its **parent**, so `notplaceable`,
+  `noteditinlinenew` and `dontcollapsecategories` cut a flag off for the whole
+  subtree; `WeaponPickup`'s descendants stay unplaceable under a placeable `Pickup`.
+  - **`config` means "has config properties", own or inherited.** `config(Name)` only
+    names the ini: `VoiceChatRoom` declares `config(User)` with no config vars and
+    has no flag.
+  - `localized` likewise.
+  - `cacheable` (0x2000000) and `safereplace` are set by the engine's C++ on native
+    classes, so they come from the compiled package, as UCC reads them from the
+    binaries.
+  - `instanced` sets `editinlinenew` plus 0x200000.
+- **Property flags.**
+  - `automated` implies `edit editinlinenew needctorlink` (1,275 engine fields).
+  - `editinlineuse` implies `editinline`, and `globalconfig` implies `config`.
+  - A `pointer` is `native transient`.
+  - `native` strings and arrays get no `needctorlink`; a struct holding a string or
+    array gets it.
+  - An object property of an `instanced` class gets `editinline exportobject`.
+  - Locals declared *after a statement* (UCC allows it) get no `needctorlink`.
+- **`ignores`.** A name in the engine's probe range clears a bit in the state's probe
+  mask; any other name adds an empty stub that copies the target's parameters. The 47
+  probe names (`Tick`, `Timer`, `Touch`, `BeginState`, ...) were measured by
+  ignoring every non-final function of `Object`, `Actor`, `Pawn`, `Controller`,
+  `PlayerController` and `AIController` in a probe state.
+- **Which function a function overrides (`super`)** depends on declaration order:
+  - A state function links to the state it extends (following `extends` chains
+    across classes), then the same-named state up the hierarchy, then the class's own
+    function **only if declared earlier in the file**, then the ancestors'.
+    `Console.Typing.KeyEvent` gives `Console.KeyEvent`, but `Pawn`'s `AnimEnd` comes
+    after `state Dying`, so `Pawn.Dying.AnimEnd` gives `Actor.AnimEnd`.
+  - Overrides inherit `net`/`netreliable` from wherever up the chain they were
+    replicated.
+- **Operator names.** One word per symbol character (`!=` is `NotEqual`), `Pre` for a
+  preoperator, then the parameter types. A qualified struct uses its bare name, and an
+  array uses its element type.
+- **Names compare without case.** UCC stores a name in whichever spelling its global
+  name table saw first (`HUD` against `Hud`), which no parser can predict.
+
+Next in P2: the error catalogue, i.e. declaration errors reported with UCC's line
+and message.
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,

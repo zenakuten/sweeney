@@ -1,8 +1,8 @@
 {
  "rates": {
   "corpus.engine": 1.0,
-  "decl.engine.full": 0.0,
-  "decl.engine.names": 0.0,
+  "decl.engine.full": 0.9406,
+  "decl.engine.names": 0.9743,
   "hang.probes.precision": 1.0,
   "hang.probes.recall": 1.0,
   "probes.defaults": 0.0,

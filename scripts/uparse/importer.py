@@ -21,6 +21,7 @@ first stage. Its quirks are UCC's, each pinned by a probe in tests/uparse:
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 MAX_LINE = None     # Epic's 4095-character cut; measured absent on the 3374 UCC
 
@@ -240,6 +241,34 @@ def import_class(src: bytes | str) -> Imported:
             deps.append(stripped[k:e if e >= 0 else len(stripped)])
 
     return Imported(script, defaults, cpptext, class_name, base_name, deps, None)
+
+
+def expand_includes(script_text: str, package_dir: Path | None, depth: int = 0) -> str:
+    """Splice `#include <file>` lines the way the compiler does: the line is replaced
+    by the file's text up to `defaultproperties` (case-sensitive, as UCC searches).
+    The path is relative to the package directory, where UCC compiles from. The
+    included text is inserted after import, so the importer's scan never sees it."""
+    if package_dir is None or depth > 8 or "#include" not in script_text.lower():
+        return script_text
+    out = []
+    for line in script_text.split("\r\n"):
+        s = line.strip()
+        if s[:1] == "#" and s[1:].lstrip().lower().startswith("include"):
+            rel = s[1:].lstrip()[len("include"):].strip().split("//")[0].strip()
+            target = package_dir / rel.replace("\\", "/")
+            try:
+                text = decode(target.read_bytes())
+            except OSError:
+                out.append(line)              # UCC: "include file ... not found"
+                continue
+            k = text.find("defaultproperties")
+            if k >= 0:
+                text = text[:k]
+            text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+            out.append(expand_includes(text, package_dir, depth + 1).rstrip("\r\n"))
+            continue
+        out.append(line)
+    return "\r\n".join(out)
 
 
 def _strfind(s: str, find: str, start: int = 0) -> int:

@@ -78,8 +78,37 @@ def check_file(name: str, src: bytes) -> list[Diag] | None:
     return r.errors if isinstance(r, Prediction) else [r]
 
 
-def declarations(name: str, src: bytes) -> dict | None:
+def declarations(name: str, src: bytes, package: str | None = None, context=None,
+                 path=None) -> dict | None:
     """The class's declarations, in the shape reflect.py's class_view gives for the
     compiled class: {"name", "super", "fields": [{"name", "kind", "flags", ...}]}.
-    None means don't know."""
-    return None
+    None means don't know (the file doesn't get through the front end).
+
+    `package` is the package the class is built into; by default it's looked up in
+    the context (the engine checkout and the local corpus). Types are resolved
+    against `context`, by default that same index. `path`, the file's location, lets
+    `#include` lines be resolved (relative to the package directory).
+    """
+    from pathlib import Path
+    from .importer import import_class, expand_includes
+    from .lexer import tokenize, LexError
+    from .decl import parse_declarations, DeclError
+    from .context import default_context
+    from .resolve import resolve_class
+    ctx = context or default_context()
+    im = import_class(src)
+    if im.hang_line is not None:
+        return None
+    text = im.script_text()
+    if path is not None:
+        p = Path(path)
+        pkg_dir = p.parent.parent if p.parent.name.lower() == "classes" else p.parent
+        text = expand_includes(text, pkg_dir)
+    try:
+        view = parse_declarations(tokenize(text), name.rsplit(".", 1)[0])
+    except (LexError, DeclError):
+        return None
+    if package is None:
+        info = ctx.info(view["name"])
+        package = info.package if info else "Unknown"
+    return resolve_class(view, package, ctx, text)

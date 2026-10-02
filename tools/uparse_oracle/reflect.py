@@ -57,6 +57,10 @@ CLASS_FLAGS = {
     0x20: "localized", 0x40: "safereplace", 0x80: "runtimestatic", 0x100: "noexport",
     0x200: "placeable", 0x400: "perobjectconfig", 0x800: "nativereplication",
     0x1000: "editinlinenew", 0x2000: "collapsecategories", 0x4000: "exportstructs",
+    0x200000: "instanced", 0x400000: "hidedropdown", 0x800000: "cacheexempt",
+    # Set by the engine's C++ on native classes such as Inventory, GameInfo and
+    # Mutator, and inherited; UELib calls it Cacheable.
+    0x2000000: "cacheable",
 }
 STATE_FLAGS = {0x1: "editable", 0x2: "auto", 0x4: "simulated"}
 STRUCT_FLAGS = {0x1: "native", 0x2: "export", 0x4: "long", 0x8: "init"}
