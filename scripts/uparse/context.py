@@ -97,6 +97,10 @@ class Context:
         self._effective: dict[str, dict] = {}
         self._exports: dict[str, dict | None] = {}
         self._export_all: dict = {}
+        # Packages loaded whole (EditPackages, deps, the one being built); the rest
+        # of `visible` is only what their import tables name.
+        self.fully_loaded: set | None = None
+        self._imported_paths: dict[str, set] = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
         self.struct_owners: dict[str, list] = {}  # every class declaring a struct of that name
         self.enum_owners: dict[str, list] = {}
@@ -151,13 +155,16 @@ class Context:
             if not u.exists():
                 hits = [q for q in (inst / "System").glob("*.u") if q.stem.lower() == p]
                 u = hits[0] if hits else None
+            paths: set = set()
             if u is not None:
                 try:
                     pk = Package(str(u))
                     deps = [i["name"].lower() for i in pk.imports
                             if i["class"] == "Package" and i["outer"] == 0]
+                    paths = {pk.import_path(-k - 1).lower() for k in range(len(pk.imports))}
                 except Exception:
                     deps = []
+            self._imported_paths[p] = paths
             self._imports_cache[p] = deps
             todo.extend(deps)
         return out
@@ -336,12 +343,13 @@ class Context:
 
         class _Only:
             def __enter__(self_):
-                self_.saved = ctx.visible
+                self_.saved = ctx.visible, ctx.fully_loaded
                 ctx.visible = ctx.import_closure(packages) if packages is not None else None
+                ctx.fully_loaded = {p.lower() for p in packages} if packages is not None else None
                 return ctx
 
             def __exit__(self_, *exc):
-                ctx.visible = self_.saved
+                ctx.visible, ctx.fully_loaded = self_.saved
         return _Only()
 
     def ancestry(self, cls: str | None):
@@ -447,6 +455,17 @@ class Context:
         self._export_all[low] = every
         return out
 
+    def loaded_object(self, package: str, path: str):
+        """Whether an object of `package` is in memory: True for a package loaded
+        whole, or an object a loaded package imports; None (can't tell) otherwise:
+        an imported object can pull others in (a SoundGroup its Sounds)."""
+        if self.fully_loaded is None or package.lower() in self.fully_loaded:
+            return True
+        low = path.lower()
+        if any(low in self._imported_paths.get(p, ()) for p in self.fully_loaded):
+            return True
+        return None
+
     def _is_a(self, cls: str, parent: str):
         """True/False, or None when the hierarchy runs into an unknown class."""
         if cls.lower() == parent.lower() or parent.lower() == "object":
@@ -487,6 +506,11 @@ class Context:
         if cls is not None:
             hits = [h for h in hits if self._is_a(h[1], cls) is not False]
         hits = list(dict.fromkeys(hits))
+        unsure = [h for h in hits if self.loaded_object(h[0].split(".")[0], h[0]) is None]
+        if unsure:
+            hits = [h for h in hits if h not in unsure]
+            if not hits:
+                return "ambiguous"        # there, but maybe not in memory
         if not hits:
             return None
         return hits[0] if len(hits) == 1 else "ambiguous"
