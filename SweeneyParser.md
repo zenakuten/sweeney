@@ -177,16 +177,33 @@ run with a short `--timeout`. 10s is enough here, where a real build takes about
   can't have had, so a few engine classes don't compile exactly as written. The
   positive-corpus oracle has to allow for this: "every engine file parses clean" is
   the target only for code, not for `defaultproperties` text.
-- **Scoreboard** (`score.py`), run after every change:
-  - corpus: files parsed clean / total
-  - probes: outcome-class agreement, line agreement, message agreement
-  - hang suite: recall and precision
-  - reflection diff: mismatched fields over the corpus packages
-  - divergences clustered by signature `(ucc_outcome, ucc_msg_template, our_outcome,
-    our_msg_template)`, largest cluster first, with the 3 smallest examples each
-- **Ratchet.** The scoreboard is committed (`tests/uparse/score.json`). A change that
-  lowers any number is rejected. That's what keeps unattended agents from
-  thrashing.
+- **Scoreboard.** *Built:* `tools/uparse_oracle/score.py`. It runs offline in about 3
+  seconds; every answer it compares against was recorded from UCC earlier. It scores
+  the parser interface in `scripts/uparse/__init__.py` (`predict`, `check_file`,
+  `declarations`, each allowed to answer "don't know", which never counts as
+  agreement):
+  - `probes.*`: the goldens in `tests/uparse/probes/`. Each is a `.uc` plus a `.json`
+    that only `probes.py` (i.e. UCC) writes. Scored on outcome, plus first error line
+    and message where UCC reported an error. 24 to start: the measured traps, the
+    ternary contexts, and the rules found so far.
+  - `probes.outcome.ok|error|hang`, and the same for seeds: agreement per UCC outcome.
+    Most cases compile, so a parser that answers "ok" to everything scores 85% on seed
+    outcomes overall, but 0% on `seeds.outcome.error`.
+  - `hang.probes.*` / `hang.seeds.*`: recall and precision of hang predictions.
+  - `corpus.engine` / `corpus.local`: files `check_file` parses clean.
+  - `decl.engine|local.names|full`: classes whose `declarations()` match the compiled
+    class from `reflect.py`, by field names and kinds, and in full (flags, types,
+    super, class flags, config). Field order is ignored for now. Checked by feeding
+    it reflect's own views, which score 2222/2222.
+  - `seeds.*`: UCC's verdict on all 3493 corpus classes built alone.
+  - Disagreements are clustered by `(section, ucc outcome, ucc message template,
+    predicted outcome, predicted message template)`, largest first, with the 3
+    smallest examples each.
+- **Ratchet.** `score.py --check` fails if any number drops below its ratchet, and
+  `--update` refuses to write one that dropped. Only reproducible numbers go in the
+  repo (`tests/uparse/score.json`: probes and the engine source). Local mods (listed
+  in `~/.sweeney/oracle/corpus-local.txt`) and seeds go in
+  `~/.sweeney/oracle/score-local.json`. The baseline is committed at zero everywhere.
 
 ## Phases
 
@@ -327,7 +344,9 @@ Guards for unattended running:
 4. ~~Extend `ue2.py` into `reflect.py` far enough to dump one compiled class's
    properties and functions, and diff it by hand against its `.uc`.~~ Done; see
    *Oracle 3* below.
-5. Stand up `score.py` on an empty parser and commit the baseline.
+5. ~~Stand up `score.py` on an empty parser and commit the baseline.~~ Done.
+
+Next is P1, the lexer.
 
 ## Oracle 3: `reflect.py`
 

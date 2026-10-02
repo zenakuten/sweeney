@@ -1,0 +1,14 @@
+{
+ "rates": {
+  "corpus.engine": 0.0,
+  "decl.engine.full": 0.0,
+  "decl.engine.names": 0.0,
+  "hang.probes.recall": 0.0,
+  "probes.line": 0.0,
+  "probes.message": 0.0,
+  "probes.outcome": 0.0,
+  "probes.outcome.error": 0.0,
+  "probes.outcome.hang": 0.0,
+  "probes.outcome.ok": 0.0
+ }
+}
