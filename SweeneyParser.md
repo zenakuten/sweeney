@@ -549,6 +549,48 @@ line and message. Seed classes UCC rejects: 164 of 507 predicted exactly, with *
 error predicted for any class UCC accepts** (corpus and `ok` seeds alike). What's left
 is mostly errors in function bodies (P4) and in `defaultproperties` import (P6).
 
+## P6: `defaultproperties` (done)
+
+`scripts/uparse/defaults.py` runs UCC's defaults import: the defaults text, line by
+line, onto a copy of the parent's defaults, then stores only the values that differ.
+The parent's defaults come from the compiled packages, merged from `Object` down,
+which is what UCC copies. Errors are predicted the way UCC's output shows them: line
+0, and the **last** line logged, since the import keeps going after most errors.
+
+`tests/uparse/suites/defaults.jsonl` (65 cases) pins the import rules. Measured:
+
+- **Coercion:** `I=3.9` stores 3, `I=12abc` 12, `Y=300` 44 (a byte wraps), `F=2e3`
+  2000.
+- **Dropped without failing the build:** `I=0x10`, `I=+5`, `B=yes`, a struct value
+  with no parentheses, a `class<Pawn>` given a `Light`, an unknown property, a missing
+  `=`, an out-of-range index.
+- **Strings:** `"a\41b"` stores `a41b` (a backslash takes the next character), and an
+  unquoted string fails (`Missing '"' in string default properties`).
+- **Line splitting:** `|` splits a line outside quotes, so `I=1|J=2` sets both.
+- **Struct members you don't mention** keep the current value, the parent's or zero.
+  A nested-tag struct stores every member, zeros included.
+- **Object references:**
+  - The quoted form `Type'Pkg.Name'` loads the package from disk.
+  - A path may begin with a group or class inside *any loaded package*
+    (`Sounds.HeadShotted` finds `WSUTComp.Sounds.HeadShotted`), and `Pkg.Name`
+    finds an object inside a group.
+  - "Loaded" means the stock packages, the dependencies, and everything their import
+    tables pull in (`UTDiscordBridge.u` brings `LibHTTP4`).
+- **Errors name a property by the class that declares it**
+  (`ClassProperty Engine.Inventory.AttachmentClass`).
+
+Also now predicted: `Type'Pkg.Name'` literals in *code*, compiled before defaults
+are imported, which only find already-loaded objects (`Can't find Sound 'Pkg.Name'`).
+And the parser's context is limited to what each build loads, so a mod built without
+WSUTComp doesn't see WSUTComp's classes.
+
+**Scoreboard:** `probes.defaults` went from 0 to **380/380 (100%)**: the stored defaults
+of every compiling probe, silent discards included, predicted exactly. Probe errors:
+170/194. Seed errors predicted exactly: 164 to 228 of 507. No error predicted for any
+class UCC accepts. The corpus metric counts a predicted error as agreement when the
+seed run recorded UCC rejecting that file with the same message (three engine dump
+files have broken `defaultproperties`).
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,

@@ -54,7 +54,8 @@ def diff_fields(want: list, got: list, where: str, out: list) -> None:
     for k in sorted(set(w) & set(g)):
         a, b = w[k], g[k]
         name = f"{where}.{a['name']}" if where else a["name"]
-        for attr in sorted((set(a) | set(b)) - {"name", "kind", "fields"} - IGNORED):
+        for attr in sorted(k for k in (set(a) | set(b)) - {"name", "kind", "fields"} - IGNORED
+                           if not k.startswith("_")):
             va, vb = a.get(attr), b.get(attr)
             if attr == "flags":
                 va, vb = sorted(va or []), sorted(vb or [])

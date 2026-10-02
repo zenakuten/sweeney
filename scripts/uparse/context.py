@@ -29,6 +29,7 @@ class ClassInfo:
         self.class_flags: list[str] = []     # own flags (compiled: effective)
         self.within: str | None = None
         self.struct_fields: dict[str, list] = {}   # lower struct name -> its member fields
+        self.struct_defs: dict[str, dict] = {}
         self.compiled = False                # flags are already effective
         self.function_defs: dict[str, dict] = {}   # lower name -> function field
         self.has_localized = False
@@ -36,6 +37,8 @@ class ClassInfo:
         self.consts: dict[str, list[str]] = {}    # lower const name -> value tokens
         self.state_ext: dict[str, str] = {}       # lower state -> the state it extends
         self.vars: set[str] = set()
+        self.var_defs: dict[str, dict] = {}       # lower property name -> field
+        self.enum_values: dict[str, list[str]] = {}
 
     def path(self) -> str:
         return f"{self.package}.{self.name}"
@@ -57,7 +60,13 @@ class Context:
         self.enum_owner: dict[str, str] = {}
         self._compiled_loaded = False
         self.compiled_class_flags: dict[str, list[str]] = {}
+        self.compiled_defaults: dict[str, dict] = {}   # lower class -> own stored defaults
+        self.compiled_super: dict[str, str] = {}
+        self._effective: dict[str, dict] = {}
+        self._exports: dict[str, dict | None] = {}
         self.by_package: dict[tuple[str, str], ClassInfo] = {}
+        self.visible: set[str] | None = None      # packages loaded in this build, if known
+        self._imports_cache: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------ building
 
@@ -76,6 +85,48 @@ class Context:
                 continue
             self.add_view(package, view)
 
+    def _info_from_view(self, package: str, view: dict) -> "ClassInfo":
+        """A ClassInfo for a view, without touching the by-name indexes."""
+        saved = (self.classes, self.by_package, self.struct_owner, self.enum_owner)
+        self.classes, self.by_package, self.struct_owner, self.enum_owner = {}, {}, {}, {}
+        try:
+            self.add_view(package, view)
+            return next(iter(self.classes.values()))
+        finally:
+            self.classes, self.by_package, self.struct_owner, self.enum_owner = saved
+
+    def import_closure(self, packages) -> set[str]:
+        """The packages loading these pulls in: each compiled package loads the
+        packages its import table names (UTDiscordBridge.u brings LibHTTP4)."""
+        inst = Path(self.compiled_root or _config().get("install_root") or "")
+        tools = Path(__file__).resolve().parents[2] / "tools" / "uttexture"
+        sys.path.insert(0, str(tools))
+        from uttexture.ue2 import Package
+        out, todo = set(), [p.lower() for p in packages]
+        while todo:
+            p = todo.pop()
+            if p in out:
+                continue
+            out.add(p)
+            if p in self._imports_cache:
+                todo.extend(self._imports_cache[p])
+                continue
+            deps = []
+            u = inst / "System" / f"{p}.u"
+            if not u.exists():
+                hits = [q for q in (inst / "System").glob("*.u") if q.stem.lower() == p]
+                u = hits[0] if hits else None
+            if u is not None:
+                try:
+                    pk = Package(str(u))
+                    deps = [i["name"].lower() for i in pk.imports
+                            if i["class"] == "Package" and i["outer"] == 0]
+                except Exception:
+                    deps = []
+            self._imports_cache[p] = deps
+            todo.extend(deps)
+        return out
+
     def add_view(self, package: str, view: dict) -> None:
         name = view.get("name") or ""
         if not name:
@@ -90,16 +141,19 @@ class Context:
             if f["kind"] == "Struct":
                 info.structs[low] = f["name"]
                 info.struct_fields[low] = f.get("fields", [])
+                info.struct_defs[low] = f
 
                 self.struct_owner.setdefault(low, name.lower())
             elif f["kind"] == "Enum":
                 info.enums[low] = f["name"]
+                info.enum_values[low] = list(f.get("values", []))
                 self.enum_owner.setdefault(low, name.lower())
             elif f["kind"] == "Function":
                 info.functions[low] = f["name"]
                 info.function_defs[low] = f
             elif f["kind"].endswith("Property"):
                 info.vars.add(low)
+                info.var_defs.setdefault(low, f)
                 fl = f.get("flags") or []
                 if "localized" in fl:
                     info.has_localized = True
@@ -147,10 +201,25 @@ class Context:
                 continue
             for path, o in objects.items():
                 if o["kind"] == "Class":
-                    self.compiled_class_flags.setdefault(o["name"].lower(), o["class_flags"])
-                if o["kind"] != "Class" or o["name"].lower() in self.classes:
+                    low_name = o["name"].lower()
+                    self.compiled_class_flags.setdefault(low_name, o["class_flags"])
+                    if low_name not in self.compiled_defaults:
+                        try:
+                            self.compiled_defaults[low_name] = reflect.decode_defaults(pkg, objects, path)
+                        except Exception:
+                            self.compiled_defaults[low_name] = None
+                        self.compiled_super[low_name] = (o.get("super") or "").split(".")[-1].lower()
+                if o["kind"] != "Class":
+                    continue
+                if (pkg.name.lower(), o["name"].lower()) in self.by_package:
                     continue
                 view = reflect.class_view(pkg, objects, path)
+                if o["name"].lower() in self.classes:
+                    # Same name, another package (Soltoolsv14/v15): keep it per package.
+                    info = self._info_from_view(pkg.name, view)
+                    info.compiled = True
+                    self.by_package[(pkg.name.lower(), o["name"].lower())] = info
+                    continue
                 self.add_view(pkg.name, view)
                 self.classes[o["name"].lower()].compiled = True
             intrinsic.extend(pkg.imports_of_class("Class"))
@@ -158,7 +227,9 @@ class Context:
         # exported by no package; packages that use one import it, which names it.
         for name, path in intrinsic:
             if name.lower() not in self.classes and "." in path:
-                self.classes[name.lower()] = ClassInfo(name, path.split(".")[0], None)
+                info = ClassInfo(name, path.split(".")[0], None)
+                self.classes[name.lower()] = info
+                self.by_package.setdefault((info.package.lower(), name.lower()), info)
 
     # ------------------------------------------------------------ queries
 
@@ -171,11 +242,38 @@ class Context:
         if len(parts) == 2:
             package = parts[0]
         low = parts[-1].lower()
+        if self.visible is not None:
+            # Only classes in packages this build loads (stock, dependencies, its own):
+            # a mod built without WSUTComp can't see WSUTComp's classes.
+            if package and package.lower() not in self.visible:
+                return None
+            if package and (package.lower(), low) in self.by_package:
+                return self.by_package[(package.lower(), low)]
+            self._load_compiled()
+            for pkg in self.visible:
+                hit = self.by_package.get((pkg, low))
+                if hit is not None:
+                    return hit
+            return None
         if package and (package.lower(), low) in self.by_package:
             return self.by_package[(package.lower(), low)]
         if low not in self.classes:
             self._load_compiled()
         return self.classes.get(low)
+
+    def only(self, packages):
+        """A context manager limiting lookups to these packages."""
+        ctx = self
+
+        class _Only:
+            def __enter__(self_):
+                self_.saved = ctx.visible
+                ctx.visible = ctx.import_closure(packages) if packages is not None else None
+                return ctx
+
+            def __exit__(self_, *exc):
+                ctx.visible = self_.saved
+        return _Only()
 
     def ancestry(self, cls: str | None):
         seen = set()
@@ -207,6 +305,100 @@ class Context:
                 if r:
                     return r
         return None
+
+    def effective_defaults(self, cls: str | None) -> dict | None:
+        """A class's defaults as its subclasses start from: its own stored values over
+        its parent's, all the way down from Object, read from the compiled packages.
+        None if any class in the chain isn't compiled or doesn't decode."""
+        if not cls:
+            return {}
+        self._load_compiled()
+        low = cls.split(".")[-1].lower()
+        if low in self._effective:
+            return self._effective[low]
+        own = self.compiled_defaults.get(low)
+        if own is None:
+            self._effective[low] = None
+            return None
+        parent = self.compiled_super.get(low)
+        base = self.effective_defaults(parent) if parent else {}
+        if base is None:
+            self._effective[low] = None
+            return None
+        merged = {k: (dict(v) if v is not None else None) for k, v in base.items()}
+        for k, v in own.items():
+            if any(isinstance(x, list) and x and x[0] == "raw" for x in v.values()):
+                merged[k] = None          # can't decode: unknown
+                continue
+            if k in merged and merged[k] is None:
+                continue                  # still unknown: an ancestor's value didn't decode
+            merged.setdefault(k, {}).update(v)
+        self._effective[low] = merged
+        return merged
+
+    def package_exports(self, package: str) -> dict | None:
+        """{lower 'Pkg.Group.Name': (path, class name)} for a package on disk, from
+        its export table. Searched as UCC's paths are: System, Textures, Sounds,
+        StaticMeshes, Animations, Music."""
+        low = package.lower()
+        if low in self._exports:
+            return self._exports[low]
+        inst = Path(self.compiled_root or _config().get("install_root") or "")
+        found = None
+        for d, ext in (("System", ".u"), ("Textures", ".utx"), ("Sounds", ".uax"),
+                       ("StaticMeshes", ".usx"), ("Animations", ".ukx"), ("Music", ".umx")):
+            p = inst / d / f"{package}{ext}"
+            if p.exists():
+                found = p
+                break
+            if (inst / d).is_dir():
+                for q in (inst / d).glob(f"*{ext}"):
+                    if q.stem.lower() == low:
+                        found = q
+                        break
+            if found:
+                break
+        if found is None:
+            self._exports[low] = None
+            return None
+        tools = Path(__file__).resolve().parents[2] / "tools" / "uttexture"
+        sys.path.insert(0, str(tools))
+        from uttexture.ue2 import Package
+        try:
+            pkg = Package(str(found))
+        except Exception:
+            self._exports[low] = None
+            return None
+        out = {}
+        for i, e in enumerate(pkg.exports):
+            path = f"{found.stem}.{pkg.export_path(i)}"
+            out[path.lower()] = (path, pkg.class_of(e))
+        self._exports[low] = out
+        return out
+
+    def find_loaded(self, path: str):
+        """UCC's ANY_PACKAGE lookup over the loaded packages: `path` may start with a
+        package, or with a group or class inside any loaded package
+        (Sounds.HeadShotted finds WSUTComp.Sounds.HeadShotted). (path, class),
+        "ambiguous", or None."""
+        if self.visible is None:
+            return "ambiguous"
+        want = path.lower()
+        first, leaf = want.split(".")[0], want.split(".")[-1]
+        hits = []
+        for pkg in self.visible:
+            exports = self.package_exports(pkg)
+            if not exports:
+                continue
+            for k, v in exports.items():
+                if k == want or k.endswith("." + want):
+                    hits.append(v)
+                elif "." in want and pkg == first and k.split(".")[-1] == leaf:
+                    hits.append(v)        # Pkg.Name, the object inside a group
+        hits = list(dict.fromkeys(hits))
+        if not hits:
+            return None
+        return hits[0] if len(hits) == 1 else "ambiguous"
 
     def compiled_flags(self, name: str) -> list[str]:
         """The flags of a class as compiled in the install, whether or not it has
@@ -308,6 +500,8 @@ class Context:
         for owners, kind in ((self.struct_owner, "struct"), (self.enum_owner, "enum")):
             if low in owners:
                 info = self.classes[owners[low]]
+                if self.visible is not None and info.package.lower() not in self.visible:
+                    continue
                 table = info.structs if kind == "struct" else info.enums
                 return kind, f"{info.path()}.{table[low]}"
         return None

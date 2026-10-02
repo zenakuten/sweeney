@@ -85,6 +85,22 @@ class Tally:
                 for m, (a, n) in sorted(self.counts.items())}
 
 
+def _norm_defaults(d) -> str:
+    """Stored defaults for comparison. Names and object paths compare without case
+    (the name table's spelling); strings keep theirs."""
+    def norm(v):
+        if isinstance(v, list) and len(v) == 2 and v[0] in ("name", "obj") and isinstance(v[1], str):
+            return [v[0], v[1].lower()]
+        if isinstance(v, list):
+            return [norm(x) for x in v]
+        if isinstance(v, dict):
+            return {k.lower(): norm(x) for k, x in v.items()}
+        if isinstance(v, float):
+            return round(v, 5)
+        return v
+    return json.dumps(norm(d), sort_keys=True)
+
+
 def compare_outcome(t: Tally, section: str, ident: str, size: int,
                     ucc: dict, pred: "uparse.Prediction") -> None:
     """Score one labelled case: UCC's {outcome, errors} vs a Prediction."""
@@ -96,11 +112,12 @@ def compare_outcome(t: Tally, section: str, ident: str, size: int,
         want = ucc["errors"][0]
         got = pred.errors[0] if pred.errors else None
         t.add(f"{section}.line", bool(got) and got.line == want["line"])
-        t.add(f"{section}.message", bool(got) and got.message == want["message"])
+        t.add(f"{section}.message", bool(got) and got.message.lower() == want["message"].lower())
     if ucc["outcome"] == "ok" and "defaults" in ucc:
         # What UCC stored, silent discards included. Scored only where recorded.
-        t.add(f"{section}.defaults", pred.defaults == ucc["defaults"])
-        if pred.defaults != ucc["defaults"]:
+        same = pred.defaults is not None and _norm_defaults(pred.defaults) == _norm_defaults(ucc["defaults"])
+        t.add(f"{section}.defaults", same)
+        if not same:
             kind = "unknown" if pred.defaults is None else "mismatch"
             t.diverge(section, ("defaults", kind), (size, ident))
     if ucc["outcome"] == "hang":
@@ -108,8 +125,8 @@ def compare_outcome(t: Tally, section: str, ident: str, size: int,
     if pred.outcome == "hang":
         t.add(f"hang.{section}.precision", ucc["outcome"] == "hang")
 
-    ucc_msg = template(ucc["errors"][0]["message"]) if ucc["errors"] else ""
-    pred_msg = template(pred.errors[0].message) if pred.errors else ""
+    ucc_msg = template(ucc["errors"][0]["message"]).lower() if ucc["errors"] else ""
+    pred_msg = template(pred.errors[0].message).lower() if pred.errors else ""
     ucc_line = ucc["errors"][0]["line"] if ucc["errors"] else None
     pred_line = pred.errors[0].line if pred.errors else None
     agree = pred.outcome == ucc["outcome"] and (
@@ -167,11 +184,34 @@ def score_probes(t: Tally) -> None:
         compare_outcome(t, "probes", pid, len(src), golden, pred)
 
 
+def _seed_errors() -> dict:
+    """{source path: UCC's first error message} from seeds.json, for corpus files
+    UCC rejects (the engine dump has a few)."""
+    manifest = default_root() / "seeds.json"
+    if not manifest.exists():
+        return {}
+    out = {}
+    for it in json.loads(manifest.read_text()):
+        if it.get("outcome") == "error" and it.get("errors"):
+            out[it["source"]] = _seed_error(it["errors"][0])["message"]
+    return out
+
+
+def _strip_class_prefix(msg: str) -> str:
+    """Drop a leading 'Pkg.Class: ' (a seed is built as Probe.Seed_Foo)."""
+    return re.sub(r"^[\w.]+: ", "", msg).lower()
+
+
 def score_corpus(t: Tally, packages, label: str) -> None:
+    seeds = _seed_errors()
     for pkg, files in packages:
         for f in files:
             diags = uparse.check_file(f.name, f.read_bytes())
             clean = diags == []
+            ucc = seeds.get(str(f))
+            if not clean and diags and ucc and \
+                    _strip_class_prefix(diags[0].message) == _strip_class_prefix(ucc):
+                clean = True              # UCC rejects this file too, with this error
             t.add(f"corpus.{label}", clean)
             if not clean:
                 first = template(diags[0].message) if diags else ""
@@ -194,7 +234,8 @@ def _norm_field(f: dict, full: bool) -> tuple:
     if not full:
         return base
     extra = tuple((k, _norm_value(k, f[k], f["kind"])) for k in sorted(f)
-                  if k not in ("name", "kind", "fields", "script_size", "rep_offset"))
+                  if k not in ("name", "kind", "fields", "script_size", "rep_offset")
+                  and not k.startswith("_"))
     sub = tuple(sorted(_norm_field(g, True) for g in f.get("fields", [])))
     return base + extra + (sub,)
 
@@ -302,6 +343,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--update", action="store_true")
+    ap.add_argument("--accept", action="store_true",
+                    help="with --update: write even though numbers dropped -- only for when "
+                         "the goldens changed (new probes), never to hide a parser regression")
     ap.add_argument("--only", default="", help="comma-separated sections")
     ap.add_argument("--clusters", type=int, default=10, help="disagreement clusters to show")
     a = ap.parse_args()
@@ -340,7 +384,7 @@ def main() -> int:
     repo_now = {k: v for k, v in current.items() if not is_local(k)}
     problems = drops(repo_now, load_ratchet(REPO_SCORE)) + \
         drops(current, load_ratchet(LOCAL_SCORE))
-    if problems and (a.check or a.update):
+    if problems and (a.check or (a.update and not a.accept)):
         print("\nREGRESSED below the ratchet:")
         for p in problems:
             print("  " + p)

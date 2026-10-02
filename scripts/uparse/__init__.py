@@ -38,12 +38,21 @@ class Analysis:
     hang_line: int | None = None
     error: Diag | None = None       # the first error UCC would report, if any
     view: dict | None = None        # the resolved declarations (when it parses)
+    defaults: dict | None = None    # what UCC would store for the class's defaults
 
 
 def analyze(name: str, src: bytes, package: str | None = None, context=None,
-            path=None) -> Analysis:
+            path=None, visible=None) -> Analysis:
     """Run the stages in UCC's order -- importer, lexer, declarations, the checks
-    that need other classes -- and keep the first error UCC would hit."""
+    that need other classes -- and keep the first error UCC would hit. `visible`
+    limits other classes to the packages this build loads (None: everything known)."""
+    from .context import default_context
+    ctx = context or default_context()
+    with ctx.only(visible):
+        return _analyze(name, src, package, ctx, path)
+
+
+def _analyze(name, src, package, context, path) -> Analysis:
     from pathlib import Path
     from .importer import import_class, expand_includes
     from .lexer import tokenize_partial
@@ -95,7 +104,90 @@ def analyze(name: str, src: bytes, package: str | None = None, context=None,
     if candidates:
         pos, line, msg = min(candidates, key=lambda c: c[0])
         return Analysis(error=Diag(name, line, msg))
-    return Analysis(view=resolve_class(view, package, ctx, text))
+    resolved = resolve_class(view, package, ctx, text)
+
+    # defaultproperties: imported after everything compiles. Errors there carry no
+    # line (0), and UCC's output shows the last line logged.
+    # Object literals in code: compiled in pass 2, before defaults are imported.
+    # UCC only finds objects already loaded ("Can't find Sound 'Pkg.Name'").
+    lit = _object_literal_error(tokens, ctx, package, name)
+    if lit is not None:
+        return Analysis(error=lit, view=resolved)
+
+    from .defaults import predict_defaults
+    stored, logged, failed = predict_defaults(_with_inner(resolved), [t for _, t in im.defaults],
+                                              package, ctx, _stock_packages(ctx),
+                                              has_exec="#exec" in text.lower())
+    if failed and logged:
+        return Analysis(error=Diag(name, 0, logged[-1]), view=resolved)
+    return Analysis(view=resolved, defaults=stored)
+
+
+def _object_literal_error(tokens, ctx, package: str, name: str) -> "Diag | None":
+    """The first `Type'Pkg.Name'` literal in the script whose object isn't loaded.
+    Only claimed when sure: a class type that isn't an Actor (else it isn't an object
+    literal), and a package we can read. Anything doubtful stops the check."""
+    from .lexer import OBJECT, IDENT, NAME
+    if ctx.visible is None:
+        return None
+    for i, t in enumerate(tokens):
+        if t.kind not in (OBJECT, NAME) or i == 0 or tokens[i - 1].kind != IDENT:
+            continue
+        if t.kind == NAME and (not t.text or " " in t.text):
+            continue
+        tname = tokens[i - 1].text
+        if t.kind == NAME and ctx.info(tname) is None:
+            continue                      # `case 'Foo'`, `return 'Foo'`: a name, not an object
+        tinfo = ctx.info(tname)
+        if tinfo is None:
+            return None
+        if any(a.name.lower() == "actor" for a in ctx.ancestry(tinfo.name)):
+            return None
+        path = t.text
+        pkg = path.split(".")[0].lower()
+        if pkg in (package.lower(), name.rsplit(".", 1)[0].lower()):
+            continue
+        if tinfo.name.lower() == "class":
+            if ctx.info(path) is not None:
+                continue
+            if "." in path and pkg in ctx.visible:
+                return None               # loaded, but we may just not know the class
+            if "." not in path:
+                return None               # a bare class name: own package, can't tell
+        else:
+            hit = ctx.find_loaded(path)
+            if hit == "ambiguous":
+                return None
+            if hit is not None:
+                continue
+        return Diag(name, t.line, f"Can't find {tinfo.name} '{path}'")
+    return None
+
+
+def _with_inner(view: dict) -> dict:
+    """The resolved view, with array element types under "inner_field"."""
+    def fix(f):
+        g = dict(f)
+        if "_inner_field" in g:
+            g["inner_field"] = g["_inner_field"]
+        if "fields" in g:
+            g["fields"] = [fix(x) for x in g["fields"]]
+        return g
+    return {**view, "fields": [fix(f) for f in view["fields"]]}
+
+
+def _stock_packages(ctx) -> list[str]:
+    """EditPackages as shipped (Default.ini): the packages loaded while compiling."""
+    from pathlib import Path
+    import json
+    try:
+        cfg = json.load(open(Path.home() / ".sweeney" / "config.json"))
+        root = Path(ctx.compiled_root or cfg.get("install_root"))
+        text = (root / "System" / "Default.ini").read_text(encoding="latin-1")
+    except Exception:
+        return []
+    return [l.split("=", 1)[1].strip() for l in text.splitlines()
+            if l.strip().lower().startswith("editpackages=")]
 
 
 def _decoded_len(src: bytes) -> str:
@@ -112,17 +204,22 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     so a hang anywhere wins. Errors in function bodies aren't checked yet, so a class
     that gets through is "unknown", not "ok".
     """
+    from .context import default_context
     first_error = None
+    defaults = None
+    visible = _stock_packages(default_context()) + list(deps or []) + list(packages)
     for pkg, files in packages.items():
         for name, src in files.items():
-            a = analyze(name, src, package=pkg)
+            a = analyze(name, src, package=pkg, visible=visible)
             if a.hang_line is not None:
                 return Prediction("hang", [Diag(name, a.hang_line, HANG_MESSAGE)])
             if a.error is not None and first_error is None:
                 first_error = a.error
+            if len(files) == 1:
+                defaults = a.defaults
     if first_error:
         return Prediction("error", [first_error])
-    return Prediction("unknown")
+    return Prediction("unknown", defaults=defaults)
 
 
 def check_file(name: str, src: bytes) -> list[Diag] | None:

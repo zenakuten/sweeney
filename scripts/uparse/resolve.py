@@ -232,6 +232,13 @@ class _Resolver:
             out["type"] = f"{self.class_path}.{f['type']}" if "." not in f["type"] else f["type"]
         elif kind == "ArrayProperty":
             out["inner"] = f"{owner_path}.{f['name']}.{f['name']}"
+            inner = f.get("inner_type")
+            if inner:
+                fake = {"name": f["name"], "kind": inner["kind"], "_word": inner.get("word")}
+                for k in ("type", "enum", "meta_class"):
+                    if k in inner:
+                        fake[k] = inner[k]
+                out["_inner_field"] = self._property(fake, owner_path)
 
         if isinstance(out.get("array_dim"), dict):
             out["array_dim"] = self._const_dim(out["array_dim"]["const"])
