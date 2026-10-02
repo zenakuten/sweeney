@@ -23,6 +23,13 @@ cannot be checked by anyone else using Sweeney. Work from the script source. Fin
 already distilled into these docs are stated as engine behaviour and are fine as they
 stand.
 
+One allowed use: **the C++ may guide which test cases get written, never the code.**
+Reading it locally to learn which behaviours exist (error sites, quirk branches, pass
+order) is fine. Each behaviour must be turned into a test case whose expected outcome
+was recorded by running UCC, and that recorded result is the evidence, not the
+source. Copy no C++, cite no C++ files, functions or lines, and don't port code
+function by function. See `SweeneyParser.md`.
+
 **Skills must stay front-end-neutral.** They run in Claude Code, Copilot CLI and VS Code,
 so: no `${CLAUDE_PLUGIN_ROOT}`, no Claude-only frontmatter, no assuming a slash command
 ran. Resolve paths through `~/.sweeney/config.json`, which `scripts/setup.sh` writes.
