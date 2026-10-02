@@ -207,11 +207,24 @@ def _norm_class(view: dict, full: bool) -> tuple:
             (view.get("config") or "").lower(), fields)
 
 
+def reference_root(label: str) -> Path | None:
+    """The install whose compiled packages a corpus is compared against: for the
+    engine source (a v3369 dump), the matching retail install when the config names
+    one (engine_reference_install); otherwise, and for local mods, the install."""
+    if label == "engine":
+        ref = Path(sweeney_config().get("engine_reference_install") or "")
+        if (ref / "System").is_dir():
+            return ref
+    return install_root()
+
+
 def score_decl(t: Tally, packages, label: str) -> None:
     import reflect
-    inst = install_root()
+    from uparse.context import default_context
+    inst = reference_root(label)
     if not inst:
         return
+    ctx = default_context(inst)
     for pkg, files in packages:
         u = inst / "System" / f"{pkg}.u"
         if not u.exists():
@@ -225,7 +238,7 @@ def score_decl(t: Tally, packages, label: str) -> None:
             want = compiled.get(f.stem.lower())
             if want is None:
                 continue                      # source with no compiled class: skip
-            got = uparse.declarations(f.name, f.read_bytes(), path=f)
+            got = uparse.declarations(f.name, f.read_bytes(), path=f, context=ctx)
             for level in ("names", "full"):
                 full = level == "full"
                 ok = got is not None and _norm_class(got, full) == _norm_class(want, full)

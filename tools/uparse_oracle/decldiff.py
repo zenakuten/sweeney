@@ -25,13 +25,14 @@ sys.path.insert(0, str(HERE.parents[1] / "scripts"))
 
 import reflect  # noqa: E402
 import uparse  # noqa: E402
-from score import engine_packages, local_packages, install_root, engine_root  # noqa: E402
+from score import engine_packages, local_packages, engine_root, reference_root  # noqa: E402
+from uparse.context import default_context  # noqa: E402
 
 IGNORED = {"script_size", "rep_offset"}
 
 
-def compiled_views(pkg: str) -> dict:
-    u = install_root() / "System" / f"{pkg}.u"
+def compiled_views(pkg: str, label: str = "local") -> dict:
+    u = reference_root(label) / "System" / f"{pkg}.u"
     if not u.exists():
         return {}
     rpkg, objects, _ = reflect.load(u)
@@ -92,11 +93,13 @@ def main() -> int:
         if not p.exists() and engine_root():
             p = engine_root() / a.file
         pkg = p.parent.parent.name if p.parent.name == "Classes" else p.parent.name
-        want = compiled_views(pkg).get(p.stem.lower())
+        label = "engine" if engine_root() and engine_root() in p.resolve().parents else "local"
+        want = compiled_views(pkg, label).get(p.stem.lower())
         if want is None:
             print(f"no compiled class {p.stem} in {pkg}.u")
             return 1
-        got = uparse.declarations(p.name, p.read_bytes(), package=pkg, path=p)
+        got = uparse.declarations(p.name, p.read_bytes(), package=pkg, path=p,
+                                  context=default_context(reference_root(label)))
         for where, attr, kind, va, vb in diff_class(want, got):
             if va is None and vb is None:
                 print(f"{attr:8s} {kind} {where}")
@@ -104,16 +107,18 @@ def main() -> int:
                 print(f"{where:40s} {attr:12s} want={json.dumps(va)}  got={json.dumps(vb)}")
         return 0
 
+    label = "local" if a.local else "engine"
     packages = local_packages() if a.local else engine_packages()
+    ctx = default_context(reference_root(label))
     tally = collections.Counter()
     examples = collections.defaultdict(list)
     for pkg, files in packages:
-        views = compiled_views(pkg)
+        views = compiled_views(pkg, label)
         for f in files:
             want = views.get(f.stem.lower())
             if want is None:
                 continue
-            got = uparse.declarations(f.name, f.read_bytes(), package=pkg, path=f)
+            got = uparse.declarations(f.name, f.read_bytes(), package=pkg, path=f, context=ctx)
             seen = set()
             for where, attr, kind, va, vb in diff_class(want, got):
                 key = (attr, kind)

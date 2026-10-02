@@ -50,7 +50,8 @@ def _config() -> dict:
 
 
 class Context:
-    def __init__(self):
+    def __init__(self, compiled_root: Path | None = None):
+        self.compiled_root = compiled_root
         self.classes: dict[str, ClassInfo] = {}     # lower class name -> info
         self.struct_owner: dict[str, str] = {}      # lower struct -> lower class
         self.enum_owner: dict[str, str] = {}
@@ -89,6 +90,7 @@ class Context:
             if f["kind"] == "Struct":
                 info.structs[low] = f["name"]
                 info.struct_fields[low] = f.get("fields", [])
+
                 self.struct_owner.setdefault(low, name.lower())
             elif f["kind"] == "Enum":
                 info.enums[low] = f["name"]
@@ -116,6 +118,9 @@ class Context:
                     ext = f["super"].split(".")[-1]
                     if ext.lower() != low or "." not in f["super"]:
                         info.state_ext[low] = ext
+        if not info.has_localized and not view.get("_compiled"):
+            from .resolve import _has_localized
+            info.has_localized = _has_localized(view.get("fields", []))
         self.classes.setdefault(name.lower(), info)
         self.by_package.setdefault((package.lower(), name.lower()), info)
 
@@ -125,7 +130,7 @@ class Context:
         if self._compiled_loaded:
             return
         self._compiled_loaded = True
-        inst = Path(_config().get("install_root") or "")
+        inst = Path(self.compiled_root or _config().get("install_root") or "")
         tools = Path(__file__).resolve().parents[2] / "tools" / "uparse_oracle"
         if not (inst / "System").is_dir() or not tools.is_dir():
             return
@@ -308,15 +313,17 @@ class Context:
         return None
 
 
-_DEFAULT: Context | None = None
+_DEFAULTS: dict = {}
 
 
-def default_context() -> Context:
-    """The engine checkout and the local corpus, from ~/.sweeney/config.json."""
-    global _DEFAULT
-    if _DEFAULT is not None:
-        return _DEFAULT
-    ctx = Context()
+def default_context(compiled_root: Path | None = None) -> Context:
+    """The engine checkout and the local corpus, from ~/.sweeney/config.json, with
+    other classes read from the compiled packages under `compiled_root` (default:
+    the install). Cached per root."""
+    key = str(compiled_root or "")
+    if key in _DEFAULTS:
+        return _DEFAULTS[key]
+    ctx = Context(compiled_root)
     eng = Path(_config().get("engine_source") or "")
     if eng.is_dir():
         for d in sorted(eng.iterdir()):
@@ -332,5 +339,5 @@ def default_context() -> Context:
             cls_dir = d / "Classes" if (d / "Classes").is_dir() else d
             pkg = cls_dir.parent.name if cls_dir.name == "Classes" else d.name
             ctx.add_source_dir(pkg, sorted(cls_dir.glob("*.uc")))
-    _DEFAULT = ctx
+    _DEFAULTS[key] = ctx
     return ctx

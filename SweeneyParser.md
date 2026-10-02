@@ -439,14 +439,19 @@ which is what UCC loads; intrinsic classes like `Font` come from import tables).
 
 | | names | full |
 |---|---|---|
-| engine (2222 classes) | 97.4% | 94.1% |
-| local mods (496) | 99.8% | **99.2%** |
+| engine (1839 classes, vs the 3369 retail packages) | **100%** | **99.9%** |
+| local mods (496, vs the 3374 install) | 99.8% | **99.2%** |
 
-The mods compile from exactly the source here. Their 4 misses are stale compiled
-packages: `UT2004MCP.u` predates its source, and `WS3SPN.u` was built against an older
-`WSUTComp.u`. The engine misses are almost all drift between the v3369 dump and the
-3374 packages, i.e. members 3374 added or changed (`DrawWeaponInfo3`, `TidyUp`,
-`PROPNUM` 4 to 5). `decldiff.py --summary` lists them.
+The engine source is a v3369 dump, so it's scored against the matching retail
+packages (`engine_reference_install` in `~/.sweeney/config.json`, here
+`/data/dev/UT2004`), with the parser's context reading that same install. Against the
+3374 packages it scored 94%, and every names-level miss was a member 3374 added or
+changed. Two rules had been fitted to that drift and were wrong: a `pointer` keeps
+`const` and isn't implied `native` (only `transient`), and `safereplace` isn't set on
+native classes. The engine's 2 remaining misses are one-off native flags
+(`CacheManager`, `ObjectPool`). The mods' 4 misses are stale compiled packages:
+`UT2004MCP.u` predates its source, and `WS3SPN.u` was built against an older
+`WSUTComp.u`. `decldiff.py` diffs a class or tallies a corpus.
 
 **What UCC stores, measured from the compiled packages**, and now reproduced:
 
@@ -456,15 +461,21 @@ packages: `UT2004MCP.u` predates its source, and `WS3SPN.u` was built against an
   - **`config` means "has config properties", own or inherited.** `config(Name)` only
     names the ini: `VoiceChatRoom` declares `config(User)` with no config vars and
     has no flag.
-  - `localized` likewise.
+  - `localized` is set by a localized property, or by a property holding a struct
+    (or array of one) with a localized member. Declaring such a struct isn't enough:
+    `GUI` declares some and isn't localized; `CrosshairPack` holds one and is.
   - `cacheable` (0x2000000) and `safereplace` are set by the engine's C++ on native
     classes, so they come from the compiled package, as UCC reads them from the
     binaries.
   - `instanced` sets `editinlinenew` plus 0x200000.
 - **Property flags.**
   - `automated` implies `edit editinlinenew needctorlink` (1,275 engine fields).
-  - `editinlineuse` implies `editinline`, and `globalconfig` implies `config`.
-  - A `pointer` is `native transient`.
+  - `editinlineuse` and `editinlinenotify` imply `editinline`; `globalconfig`
+    implies `config`; `export editinline` together add `needctorlink` (one case:
+    `Actor.KParams`).
+  - A `pointer` is always `transient`.
+  - A state with no `extends` continues the same-named state up the hierarchy, even
+    when the class redeclares it (`BS_xPlayer`'s own `Spectating`).
   - `native` strings and arrays get no `needctorlink`; a struct holding a string or
     array gets it.
   - An object property of an `instanced` class gets `editinline exportobject`.

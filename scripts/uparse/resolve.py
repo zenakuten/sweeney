@@ -26,15 +26,48 @@ CUT_BY = {"_notplaceable": "placeable", "_noteditinlinenew": "editinlinenew",
 NATIVE_REGISTERED_FLAGS = {"cacheable", "safereplace"}
 
 
-def _has_flag(fields: list[dict], wanted) -> bool:
-    return any(set(wanted) & set(f.get("flags") or []) for f in fields
-               if f["kind"].endswith("Property"))
+def _has_flag(fields: list[dict], wanted, structs: bool = False) -> bool:
+    """Whether a property carries one of the flags; with `structs`, members of structs
+    declared here count too. They do for localized (CrosshairPack is localized through
+    CrosshairItem.FriendlyName) but not for config: Object's Vector has `var() config`
+    members and its subclasses aren't config."""
+    for f in fields:
+        if f["kind"].endswith("Property") and set(wanted) & set(f.get("flags") or []):
+            return True
+        if structs and f["kind"] == "Struct" and _has_flag(f.get("fields", []), wanted, True):
+            return True
+    return False
 
 
 def _has_localized(fields: list[dict]) -> bool:
-    """A class is `localized` if it declares a localized property (or inherits one)."""
-    return any("localized" in (f.get("flags") or []) for f in fields
-               if f["kind"].endswith("Property"))
+    """A class is `localized` if a property it declares is localized, or holds a struct
+    (directly or as an array) with a localized member. Declaring such a struct isn't
+    enough: GUI declares some and isn't localized; CrosshairPack holds an array of one
+    and is."""
+    structs = {f["name"].lower(): f for f in fields if f["kind"] == "Struct"}
+
+    def struct_localized(name: str, seen=()) -> bool:
+        s = structs.get(name.split(".")[-1].lower())
+        if s is None or name in seen:
+            return False
+        for m in s.get("fields", []):
+            if "localized" in (m.get("flags") or []):
+                return True
+            if m.get("_word") and struct_localized(m["_word"], seen + (name,)):
+                return True
+        return False
+
+    for f in fields:
+        if not f["kind"].endswith("Property"):
+            continue
+        if "localized" in (f.get("flags") or []):
+            return True
+        word = f.get("_word") or ""
+        if f["kind"] == "ArrayProperty":
+            word = (f.get("inner_type") or {}).get("word", "")
+        if word and struct_localized(word):
+            return True
+    return False
 # Names UCC treats as probes: `ignores` on one clears a bit in the state's probe mask
 # instead of adding a stub function. Measured by ignoring every non-final function of
 # Object, Actor, Pawn, Controller, PlayerController and AIController in a probe
@@ -199,12 +232,7 @@ class _Resolver:
             out["type"] = f"{self.class_path}.{f['type']}" if "." not in f["type"] else f["type"]
         elif kind == "ArrayProperty":
             out["inner"] = f"{owner_path}.{f['name']}.{f['name']}"
-            inner = f.get("inner_type") or {}
-            if "automated" in (out.get("flags") or []) and inner.get("kind") == "UnresolvedProperty":
-                r = self.type_of(inner.get("type", ""))
-                if r and r[0] == "class" and self.ctx.has_flag(r[1], "instanced"):
-                    if "editinline" not in out["flags"]:
-                        out["flags"].append("editinline")
+
         if isinstance(out.get("array_dim"), dict):
             out["array_dim"] = self._const_dim(out["array_dim"]["const"])
         return out
@@ -309,16 +337,29 @@ class _Resolver:
             # extends; the same-named state's in the nearest ancestor class; the
             # nearest ancestor's class-level function. Never the class's own
             # class-level function (measured: Pawn.Dying.AnimEnd -> Actor.AnimEnd).
-            if state.get("super"):
-                ext = state["super"].lower()
-                for g in self.own["fields"]:
-                    if g["kind"] == "State" and g["name"].lower() == ext:
-                        for h in g.get("fields", []):
-                            if h["kind"] == "Function" and h["name"].lower() == low:
-                                return f"{self.class_path}.{g['name']}.{h['name']}"
-                r = self.ctx.state_function(self.parent, state["super"], name)
-                if r:
-                    return r
+            ext = state.get("super")
+            seen = set()
+            while ext and ext.lower() not in seen:
+                # Follow `extends` through the class's own states (Bot.Hunting ->
+                # MoveToGoalWithEnemy -> MoveToGoal), then up the hierarchy.
+                seen.add(ext.lower())
+                own_state = next((g for g in self.own["fields"] if g["kind"] == "State"
+                                  and g["name"].lower() == ext.lower()), None)
+                if own_state is None:
+                    r = self.ctx.state_function(self.parent, ext, name)
+                    if r:
+                        return r
+                    break
+                for h in own_state.get("fields", []):
+                    if h["kind"] == "Function" and h["name"].lower() == low and not h.get("_ignored"):
+                        return f"{self.class_path}.{own_state['name']}.{h['name']}"
+                if not own_state.get("super"):
+                    # A state with no `extends` continues the same-named state up
+                    # the hierarchy (BS_xPlayer's own Spectating -> PlayerController's).
+                    r = self.ctx.state_function(self.parent, own_state["name"], name)
+                    if r:
+                        return r
+                ext = own_state.get("super")
             r = self.ctx.state_function(self.parent, state["name"], name)
             if r:
                 return r

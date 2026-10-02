@@ -426,12 +426,13 @@ class DeclParser:
             w = c.at_word()
             if w in VAR_FLAGS:
                 f = VAR_FLAGS[c.next().text.lower()]
-                if f:
+                if f and f not in flags:
                     flags.append(f)
             elif w in ALL_MODIFIERS and not (c.peek(1) is not None and c.peek(1).kind == SYMBOL):
                 raise c.error("Specified type modifiers not allowed here")
             else:
                 break
+        explicit = set(flags)
         if "globalconfig" in flags and "config" not in flags:
             flags.append("config")
         if "automated" in flags:
@@ -439,8 +440,12 @@ class DeclParser:
             flags += [x for x in ("edit", "editinlinenotify") if x not in flags]
             if category == "None":
                 category = owner
-        if "editinlineuse" in flags and "editinline" not in flags:
+        if ("editinlineuse" in flags or "editinlinenotify" in flags) and "editinline" not in flags:
             flags.append("editinline")
+        if "editinline" in explicit and "exportobject" in explicit and "needctorlink" not in flags:
+            # Measured on one case (Actor.KParams, `export editinline`): both
+            # keywords spelled out add needctorlink.
+            flags.append("needctorlink")
         typ = self._type(out)
         self._declare_names(out, typ, flags, category, "Variable declaration")
         if in_struct and not c.at(";"):
@@ -502,10 +507,10 @@ class DeclParser:
             flags.append("needctorlink")
         if "automated" in flags and "needctorlink" not in flags:
             flags.append("needctorlink")
-        if kind == "PointerProperty":
-            # Measured: a pointer is stored native and transient.
-            flags = [x for x in flags if x != "const"]
-            flags += [x for x in ("native", "transient") if x not in flags]
+        if kind == "PointerProperty" and "transient" not in flags:
+            # Measured (3369 packages): a pointer is always stored transient.
+            flags.append("transient")
+        flags = list(dict.fromkeys(flags))
         f = _field(name, kind, flags=flags, array_dim=dim, category=category)
         for k in ("enum", "type", "meta_class"):
             if k in typ:
@@ -779,7 +784,7 @@ class DeclParser:
                     inner = c.skip_group("(", ")")
                     native_index = inner[0].value if inner and inner[0].kind == INT else 0
                     numbered_native = True
-                if FUNC_FLAGS[w]:
+                if FUNC_FLAGS[w] and FUNC_FLAGS[w] not in flags:
                     flags.append(FUNC_FLAGS[w])
                 continue
             if flags:
@@ -794,7 +799,7 @@ class DeclParser:
                 inner = c.skip_group("(", ")")
                 native_index = inner[0].value if inner and inner[0].kind == INT else 0
                 numbered_native = True
-            if FUNC_FLAGS[w]:
+            if FUNC_FLAGS[w] and FUNC_FLAGS[w] not in flags:
                 flags.append(FUNC_FLAGS[w])
 
         is_op = kind_word in ("operator", "preoperator", "postoperator")
