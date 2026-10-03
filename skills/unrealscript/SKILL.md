@@ -65,7 +65,11 @@ python3 <sweeney>/scripts/upredict.py BaseMod MyMod             # several, built
 
 This parses and type-checks the whole package the way UCC does: importer, lexer,
 declarations, function bodies, and `defaultproperties`. It loads the install's
-compiled packages as UCC would. It prints one of four answers:
+compiled packages as UCC would. It also runs the package's `#exec` lines the way
+UCC does, from the mod directory: TEXTURE, AUDIO and STATICMESH (.lwo) IMPORT, and
+OBJ LOAD with or without `PACKAGE=`. So a literal like `Texture'MyIcon'` or a
+default like `Sound'MyMod.Beep'` is checked against what they actually make. It
+prints one of four answers:
 
 - `ok`: UCC will compile it.
 - `error`: UCC's first error, in its own `File.uc(N) : message` form.
@@ -75,7 +79,7 @@ compiled packages as UCC would. It prints one of four answers:
 
 It is checked against UCC itself. It has never predicted the wrong outcome on its
 test sets:
-- 619 probes;
+- 651 probes;
 - 3493 classes built alone;
 - 5273 classes, each with one deliberate mistake in a function body;
 - four real mods built whole.

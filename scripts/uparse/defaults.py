@@ -723,10 +723,22 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
         pkg_name = path.split(".")[0]
         if pkg_name.lower() in (package.lower(), name.lower()):
             # Objects of the package being built. Pkg.Name or Class.Name is a
-            # subobject created so far, a member of the class, or a class of the
-            # package; without #exec lines nothing else is there.
+            # subobject created so far, a member of the class, a class of the
+            # package, or something its #exec lines made (execs.py).
             parts = path.split(".")
-            if len(parts) != 2 or has_exec or package_exec:
+            if has_exec or package_exec:
+                return UNKNOWN
+            if pkg_name.lower() == package.lower():
+                made = [h for h in ctx.export_all(package, path)
+                        if cls is None or ctx._is_a(h[1], cls) is not False]
+                if made:
+                    return made[0]
+                if len(parts) > 2 and package.lower() in ctx.building \
+                        and ctx.info(parts[1], package) is None:
+                    # Pkg.Group.Name: not a class's subobject, and every #exec
+                    # line was modelled, so nothing else could have made it.
+                    return None
+            if len(parts) != 2:
                 return UNKNOWN
             leaf = parts[1].lower()
             if leaf in _current_importer.subobjects:

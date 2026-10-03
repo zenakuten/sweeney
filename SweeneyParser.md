@@ -711,6 +711,28 @@ directories build in order, and each sees the ones before it. It refuses to run
 without a configured install, because then every mod would look broken. It is
 documented in the unrealscript skill and the agent instructions.
 
+### `#exec` lines (`scripts/uparse/execs.py`)
+
+Object literals and defaults that name content a mod imports used to be "don't
+know". Now `predict()` runs the package's `#exec` lines first, as UCC does: with
+`ucc make` bootstrapping, every class's `#exec` runs in the first pass, before any
+body compiles, with the current directory switched to `../<Package>`
+(UnScrCom.cpp CompileScript). Modelled, from UnEdSrv.cpp: TEXTURE IMPORT (Texture),
+AUDIO IMPORT (Sound), STATICMESH IMPORT from `.lwo`, OBJ LOAD (the whole file, put
+under `PACKAGE=` when given, in which case the file's own name is not loaded), and
+`SOUND`, which is no command at all and makes nothing. A package being built no
+longer borrows objects from a stale `.u` on disk; it has only what its `#exec`
+lines made. Anything else (another command, a missing file, an `#exec` inside a
+body, which runs in the second pass) keeps the package's misses "don't know".
+
+A texture that isn't a power of two in each direction is not imported. UCC first
+shows a modal dialog (appMsgf) and waits for a click, so unattended it looks like a
+hang. It is reported, not modelled, and no probe may contain one.
+
+Probes: `tests/uparse/suites/execs.jsonl` (`gen_suites.py execs`). The scorer gives
+every probe a package directory holding its extra files. WSUTComp and WS3SPN went
+from "unknown" to "ok", and UCC agreed.
+
 ## Mutants: body errors from real code
 
 Seeds test errors that come from renaming a class, and probes are small. To exercise

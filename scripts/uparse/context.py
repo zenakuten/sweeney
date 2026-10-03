@@ -104,6 +104,17 @@ class Context:
         # Packages being built whose classes have #exec lines: they may hold
         # objects no source declares (imported textures, sounds).
         self.exec_packages: set[str] = set()
+        # Objects #exec lines made (execs.py), by package: {lower path: [(path, class)]}.
+        self.exec_objects: dict[str, dict] = {}
+        # Packages being built: they have no .u yet, only what their #exec lines made.
+        self.building: set[str] = set()
+        # Package files found by path rather than by name (OBJ LOAD FILE=...).
+        self.package_paths: dict[str, Path] = {}
+        # Packages whose imports are loaded though they aren't (OBJ LOAD ... PACKAGE=
+        # loads a file's objects into another package, and the file's imports with them).
+        self.closure_roots: set[str] = set()
+        # Why a package's #exec lines aren't all modelled: {lower package: [(file, why)]}
+        self.exec_incomplete: dict[str, list] = {}
         # Classes being built: lower name -> (own stored defaults or None, parent).
         self.source_defaults: dict[str, tuple] = {}
         self._imported_paths: dict[str, set] = {}
@@ -157,7 +168,7 @@ class Context:
                 todo.extend(self._imports_cache[p])
                 continue
             deps = []
-            u = inst / "System" / f"{p}.u"
+            u = self.package_paths.get(p) or inst / "System" / f"{p}.u"
             if not u.exists():
                 hits = [q for q in (inst / "System").glob("*.u") if q.stem.lower() == p]
                 u = hits[0] if hits else None
@@ -395,7 +406,8 @@ class Context:
         class _Only:
             def __enter__(self_):
                 self_.saved = ctx.visible, ctx.fully_loaded
-                ctx.visible = ctx.import_closure(packages) if packages is not None else None
+                ctx.visible = ctx.import_closure(list(packages) + sorted(ctx.closure_roots)) \
+                    if packages is not None else None
                 ctx.fully_loaded = {p.lower() for p in packages} if packages is not None else None
                 return ctx
 
@@ -469,16 +481,34 @@ class Context:
         return merged
 
     def package_exports(self, package: str) -> dict | None:
-        """{lower 'Pkg.Group.Name': (path, class name)} for a package on disk, from
-        its export table. Searched as UCC's paths are: System, Textures, Sounds,
-        StaticMeshes, Animations, Music."""
+        """{lower 'Pkg.Group.Name': (path, class name)} for a package, from its export
+        table on disk, plus whatever #exec lines put in it. A package being built has
+        no file yet: only its #exec objects."""
+        low = package.lower()
+        made = self.exec_objects.get(low)
+        if low in self.building:
+            disk = {}
+        else:
+            disk = self._disk_exports(package)
+            if not made:
+                return disk
+        out = dict(disk or {})
+        for k, v in (made or {}).items():
+            out.setdefault(k, v[0])
+        return out
+
+    def _disk_exports(self, package: str) -> dict | None:
+        """package_exports for the package's file. Searched as UCC's paths are:
+        System, Textures, Sounds, StaticMeshes, Animations, Music."""
         low = package.lower()
         if low in self._exports:
             return self._exports[low]
         inst = Path(self.compiled_root or _config().get("install_root") or "")
-        found = None
+        found = self.package_paths.get(low)
         for d, ext in (("System", ".u"), ("Textures", ".utx"), ("Sounds", ".uax"),
                        ("StaticMeshes", ".usx"), ("Animations", ".ukx"), ("Music", ".umx")):
+            if found:
+                break
             p = inst / d / f"{package}{ext}"
             if p.exists():
                 found = p
@@ -534,9 +564,35 @@ class Context:
 
     def export_all(self, package: str, path: str) -> list:
         """Every export at that path: one name can be a mesh and its animation."""
+        low = package.lower()
         if self.package_exports(package) is None:
             return []
-        return self._export_all.get(package.lower(), {}).get(path.lower(), [])
+        disk = [] if low in self.building else self._export_all.get(low, {}).get(path.lower(), [])
+        made = self.exec_objects.get(low, {}).get(path.lower(), [])
+        return list(dict.fromkeys(disk + made))
+
+    def file_imports(self, path: Path) -> list[str]:
+        """The packages a package file imports (lowercase)."""
+        tools = Path(__file__).resolve().parents[2] / "tools" / "uttexture"
+        sys.path.insert(0, str(tools))
+        from uttexture.ue2 import Package
+        try:
+            pk = Package(str(path))
+            return [i["name"].lower() for i in pk.imports
+                    if i["class"] == "Package" and i["outer"] == 0]
+        except Exception:
+            return []
+
+    def file_exports(self, path: Path) -> list | None:
+        """[(path without the package, class name)] for a package file, or None."""
+        tools = Path(__file__).resolve().parents[2] / "tools" / "uttexture"
+        sys.path.insert(0, str(tools))
+        from uttexture.ue2 import Package
+        try:
+            pkg = Package(str(path))
+            return [(pkg.export_path(i), pkg.class_of(e)) for i, e in enumerate(pkg.exports)]
+        except Exception:
+            return None
 
     def find_loaded(self, path: str, cls: str | None = None):
         """UCC's ANY_PACKAGE lookup over the loaded packages: `path` may start with a

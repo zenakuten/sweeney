@@ -39,6 +39,7 @@ import collections
 import json
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -184,7 +185,17 @@ def score_probes(t: Tally) -> None:
         if golden is None:
             print(f"warning: probe {pid} has no golden; run probes.py", file=sys.stderr)
             continue
-        pred = uparse.predict({"Probe": package_of(pid, src)})
+        files = package_of(pid, src)
+        with tempfile.TemporaryDirectory() as tmp:
+            # The package directory, as the sandbox lays it out: #exec FILE= paths
+            # are read from here.
+            pdir = Path(tmp) / "Probe"
+            pdir.mkdir()
+            for k, v in files.items():
+                if not k.lower().endswith(".uc") or "/" in k:
+                    (pdir / k).parent.mkdir(parents=True, exist_ok=True)
+                    (pdir / k).write_bytes(v)
+            pred = uparse.predict({"Probe": files}, [], {"Probe": pdir})
         compare_outcome(t, "probes", pid, len(src), golden, pred)
 
 
@@ -345,7 +356,8 @@ def score_packages(t: Tally) -> None:
         srcs = {f.name: f.read_bytes() for f in files}
         for inc in files[0].parent.rglob("*.uci"):
             srcs[str(inc.relative_to(pdir))] = inc.read_bytes()
-        pred = uparse.predict({pkg: srcs}, deps.get(pkg.lower(), []))
+        own = [d for d in deps.get(pkg.lower(), []) if d.lower() != pkg.lower()]
+        pred = uparse.predict({pkg: srcs}, own, {pkg: pdir})
         ok = pred.outcome == "ok"
         t.add(f"packages.{LOCAL}", ok)
         if not ok:

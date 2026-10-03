@@ -23,7 +23,8 @@ sure; build to find out.
 Packages listed are built from source in the order given, after the stock
 EditPackages and --deps. A dep must be a compiled .u in the install (System/); a
 package you are building must not be listed in --deps. Include files (#include) are
-read from the package directory.
+read from the package directory, and so are #exec FILE= paths, as UCC compiles
+from there.
 
 Exit status: 0 ok, 1 error or hang, 2 unknown.
 """
@@ -92,15 +93,18 @@ def main() -> int:
 
     check_install()
     packages: dict[str, dict[str, bytes]] = {}
+    dirs: dict[str, Path] = {}
     for p in a.packages:
         name, files = package_files(p)
         packages[name] = files
+        d = Path(p).expanduser().resolve()
+        dirs[name] = d.parent if d.name.lower() == "classes" else d
     deps = [d.strip() for d in a.deps.split(",") if d.strip()]
     clash = [d for d in deps if d.lower() in {p.lower() for p in packages}]
     if clash:
         raise SystemExit(f"upredict: {', '.join(clash)} is both built and a dep")
 
-    pred = uparse.predict(packages, deps)
+    pred = uparse.predict(packages, deps, dirs)
 
     if a.json:
         print(json.dumps({

@@ -157,7 +157,7 @@ def _analyze(name, src, package, context, path, includes=None, package_exec=True
     from .defaults import predict_defaults
     stored, logged, failed, defaults_checked = predict_defaults(
         _with_inner(resolved), [t for _, t in im.defaults], package, ctx, _stock_packages(ctx),
-        has_exec=bool(_EXEC_LINE.search(text)), package_exec=package_exec)
+        has_exec=bool(_EXEC_LINE.search(text)) and package_exec, package_exec=package_exec)
     if failed and logged:
         return Analysis(error=Diag(name, 0, logged[-1]), view=resolved)
     # A 64-character identifier gets through the lexer (65 doesn't) but can't be made
@@ -235,7 +235,7 @@ def literal_problem(ctx, package: str, own: str, type_name: str, path: str) -> s
         return "unknown"
     pkg = path.split(".")[0].lower()
     if pkg in (package.lower(), own.lower()):
-        return None
+        return _own_package_problem(ctx, package, type_name, path)
     if type_name.lower() == "class":
         if ctx.info(path) is not None:
             return None
@@ -249,6 +249,27 @@ def literal_problem(ctx, package: str, own: str, type_name: str, path: str) -> s
             return None
         if "." not in path and ctx.exec_packages:
             return "unknown"              # maybe imported by an #exec of the build
+    return f"Can't find {type_name} '{path}'"
+
+
+# Classes no object of a package being built can be in the first pass but one an
+# #exec made: its classes and their fields are none of these, and defaultproperties
+# subobjects come later, when defaults are imported.
+_EXEC_ONLY_TYPES = ("material", "sound", "mesh", "staticmesh", "font", "meshanimation")
+
+
+def _own_package_problem(ctx, package: str, type_name: str, path: str) -> str | None:
+    """A literal into the package being built (Probe.Group.Name): there is nothing
+    in it yet but its classes and what its #exec lines made. Only claimed for an
+    object type a class can't be, and when every #exec line was modelled."""
+    if path.split(".")[0].lower() != package.lower() or package.lower() not in ctx.building \
+            or package.lower() in ctx.exec_packages:
+        return None
+    if not any(ctx._is_a(type_name, t) is True for t in _EXEC_ONLY_TYPES):
+        return None
+    hits = [h for h in ctx.export_all(package, path) if ctx._is_a(h[1], type_name) is not False]
+    if hits:
+        return None
     return f"Can't find {type_name} '{path}'"
 
 
@@ -283,7 +304,8 @@ def _decoded_len(src: bytes) -> str:
     return decode(src)
 
 
-def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None) -> Prediction:
+def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None,
+            dirs: dict | None = None) -> Prediction:
     """What `UCC make` does with these packages, built in order after the stock ones
     and `deps`. packages: {PackageName: {"Foo.uc": source bytes}}.
 
@@ -294,6 +316,9 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     makes it "unknown". A package's classes see each other, and a key that isn't a
     .uc is an include file, at its path relative to the package directory.
     `defaults` are the first class's stored defaults.
+
+    `dirs` gives a package's directory ({PackageName: path}), where its #exec lines
+    find their files (execs.py). Without one, what #exec makes is "don't know".
     """
     from .context import default_context
     from pathlib import Path
@@ -305,16 +330,30 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     all_ok = True
     ctx = default_context(prefer_compiled=True)
     built: list[str] = []
-    saved_exec = ctx.exec_packages
-    ctx.exec_packages = set()
+    saved = {k: getattr(ctx, k) for k in
+             ("exec_packages", "exec_objects", "building", "package_paths", "closure_roots",
+              "exec_incomplete")}
+    ctx.exec_packages, ctx.exec_objects, ctx.building = set(), {}, set()
+    ctx.exec_incomplete = {}
+    ctx.package_paths, ctx.closure_roots = dict(saved["package_paths"]), set(saved["closure_roots"])
+    exec_loaded: list[str] = []           # packages #exec lines loaded: they stay loaded
+
+    def restore():
+        for k in set(ctx.package_paths) - set(saved["package_paths"]):
+            ctx._exports.pop(k, None)     # read from the mod's own directory
+            ctx._imports_cache.pop(k, None)
+        for k, v in saved.items():
+            setattr(ctx, k, v)
     overlays_cm = contextlib.ExitStack()
-    overlays_cm.callback(lambda: setattr(ctx, "exec_packages", saved_exec))
+    overlays_cm.callback(restore)
     with overlays_cm as overlays:
         for pkg, files in packages.items():
             if first_error:
                 break                     # UCC stops at the package that failed
             built.append(pkg)
-            visible = _stock_packages(ctx) + list(deps or []) + built
+            pdir = next((Path(v) for k, v in (dirs or {}).items() if k.lower() == pkg.lower()), None)
+            _run_execs(ctx, pkg, files, pdir, exec_loaded)
+            visible = _stock_packages(ctx) + list(deps or []) + built + exec_loaded
             r = _predict_package(ctx, pkg, files, visible, overlays, first_name)
             if r["hang"] is not None:
                 return r["hang"]
@@ -326,6 +365,59 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     if first_error:
         return Prediction("error", [first_error])
     return Prediction("ok" if all_ok else "unknown", defaults=defaults, unknown=unknown)
+
+
+def _run_execs(ctx, pkg: str, files: dict, pdir, exec_loaded: list) -> None:
+    """Run the package's #exec lines (execs.py) into the context: every one runs in
+    UCC's first pass, before any function body compiles. A package whose #exec lines
+    aren't all modelled goes in ctx.exec_packages, so a miss stays "don't know"."""
+    from pathlib import Path
+    from .importer import import_class, expand_includes
+    from . import execs
+    import json
+    ctx.building.add(pkg.lower())
+    extra = {k.replace("\\", "/").lower(): v for k, v in files.items()
+             if not k.lower().endswith(".uc")}
+    sources = []
+    for name, src in files.items():
+        if not name.lower().endswith(".uc"):
+            continue
+        im = import_class(src)
+        if im.hang_line is not None:
+            continue
+        # Expand first: an #exec can live in an #include file (WSUTComp's HUDs).
+        text = expand_includes(im.script_text(), lambda rel: (
+            lambda v: None if v is None else _decode_text(v))(
+                extra.get(rel.replace("\\", "/").lower())))
+        if _EXEC_LINE.search(text):
+            sources.append((name, text))
+    if not sources:
+        return
+    try:
+        cfg = json.load(open(Path.home() / ".sweeney" / "config.json"))
+        install = Path(ctx.compiled_root or cfg.get("install_root"))
+    except Exception:
+        install = None
+    res = execs.run_package(pkg, sources, pdir, install, ctx.file_exports)
+    for p, objs in res.objects.items():
+        for k, v in objs.items():
+            ctx.exec_objects.setdefault(p, {}).setdefault(k, [])
+            ctx.exec_objects[p][k] = list(dict.fromkeys(ctx.exec_objects[p][k] + v))
+        if p != pkg.lower() and p not in exec_loaded:
+            exec_loaded.append(p)         # PACKAGE=Other: Other is in memory now
+    for p, path in res.loaded.items():
+        ctx.package_paths.setdefault(p, path)
+        ctx._exports.pop(p, None)
+        ctx._imports_cache.pop(p, None)
+        if p not in exec_loaded:
+            exec_loaded.append(p)
+    for path in res.into_files:
+        # The file's objects now live in another package, but the packages it
+        # imports are loaded (partly) as for any package.
+        ctx.closure_roots.update(ctx.file_imports(path))
+    if res.incomplete:
+        ctx.exec_packages.add(pkg.lower())
+        ctx.exec_incomplete[pkg.lower()] = res.incomplete
 
 
 def _predict_package(ctx, pkg: str, files: dict, visible: list, overlays, first_name) -> dict:
@@ -342,10 +434,8 @@ def _predict_package(ctx, pkg: str, files: dict, visible: list, overlays, first_
     def read(rel, extra=extra):
         v = extra.get(rel.replace("\\", "/").lower())
         return None if v is None else _decode_text(v)
-    pkg_exec = any(_EXEC_LINE.search(_decode_text(src)) for k, src in files.items()
-                   if k.lower().endswith(".uc"))
-    if pkg_exec:
-        ctx.exec_packages.add(pkg.lower())
+    # Only #exec lines that weren't modelled leave objects we don't know about.
+    pkg_exec = pkg.lower() in ctx.exec_packages
     views = _source_views(files, read)
     overlays.enter_context(ctx.overlay(pkg, views))
     for name in _parents_first(files, views):
@@ -366,6 +456,8 @@ def _predict_package(ctx, pkg: str, files: dict, visible: list, overlays, first_
         out["ok"] = out["ok"] and a.compiled
         if not a.compiled and a.error is None:
             out["unknown"].append((name, a.unknown or "not modelled"))
+    if out["unknown"]:
+        out["unknown"].extend(ctx.exec_incomplete.get(pkg.lower(), []))
     return out
 
 
