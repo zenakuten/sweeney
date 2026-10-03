@@ -77,6 +77,7 @@ It is checked against UCC itself. It has never predicted the wrong outcome on it
 test sets:
 - 619 probes;
 - 3493 classes built alone;
+- 5273 classes, each with one deliberate mistake in a function body;
 - four real mods built whole.
 
 It needs the install configured by `setup.sh`. A run takes a few seconds per hundred

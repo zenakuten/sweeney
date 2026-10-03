@@ -379,14 +379,14 @@ class DeclParser:
                 c.expect(">")
             return {**base, "kind": "ClassProperty", "word": "class", "meta_class": meta or "Object"}
         if w == "array":
-            c.expect("<")
+            c.expect("<", "array")
             if c.at_word() == "array":
                 raise c.error("Arrays within arrays not supported")
             inner = self._type(owner_fields, thing)
             if c.at(">>"):                         # array<class<X>> lexes '>>'
                 c.next()
             else:
-                c.expect(">")
+                c.expect(">", "array")
             return {**base, "kind": "ArrayProperty", "word": "array", "inner_type": inner}
         if w == "map":
             raise c.error("Map are not supported in UnrealScript yet", tok)

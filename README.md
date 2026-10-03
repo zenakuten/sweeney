@@ -71,8 +71,9 @@ running it. It parses and type-checks every class the way UCC does: importer qui
 declarations, function bodies with UCC's overload and conversion rules, and the
 `defaultproperties` import. It answers `ok`, UCC's first error (file, line and exact
 message), `hang`, or `unknown` when it hits something it doesn't model. It is scored
-against UCC itself: no wrong outcome across 619 probes, 3493 classes built alone and
-four real mods built whole. How it was built and measured is in `SweeneyParser.md`.
+against UCC itself: no wrong outcome across 619 probes, 3493 classes built alone,
+5273 classes each broken in one place, and four real mods built whole. On the broken
+classes it gives UCC's exact error message 99.5% of the time. How it was built and measured is in `SweeneyParser.md`.
 
 ```
 $ upredict.py MyMod --deps WSUTComp

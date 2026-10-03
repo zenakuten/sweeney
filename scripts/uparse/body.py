@@ -557,6 +557,9 @@ class Scope:
 
 # ---------------------------------------------------------------- the compiler
 
+NONE_CONTEXT_ASSERT = ("Assertion failed: Token.PropertyClass != NULL "
+                       "[File:C:\\GameDev\\ut2004\\Editor\\Src\\UnScrCom.cpp] [Line: 2930]")
+
 # Statements that CheckAllow(ALLOW_Cmd), and the name UCC gives them when refused.
 CMD_WORDS = {"switch": "'Switch'", "if": "'If'", "while": "'While'", "do": "'Do'",
              "for": "'For'", "foreach": "'ForEach'", "assert": "'Assert'"}
@@ -578,6 +581,7 @@ class Body:
         self.got_affector = False
         self.nests: list[dict] = []
         self.vardecl_ok = True        # no command yet: locals still allowed
+        self.last_field: str | None = None
         self.labels: set[str] = set()
         self.gotos: list[tuple[str, int]] = []
 
@@ -758,7 +762,10 @@ class Body:
         if need_semicolon and not self.accept(";"):
             nxt = self.next()
             if nxt is not None:
-                raise CompileError(f"Missing ';' before '{nxt.text}'", nxt.line)
+                line = nxt.line
+                if nxt.kind == IDENT and nxt.text.lower() == "else" and self.peek() is not None:
+                    line = self.peek().line   # UCC has looked past 'else' (for 'else if')
+                raise CompileError(f"Missing ';' before '{nxt.text}'", line)
             if self.close is not None:
                 raise CompileError(f"Missing ';' before '{self.close.text}'", self.close.line)
             raise CompileError("Missing ';'", self.eof_line)
@@ -1077,6 +1084,7 @@ class Body:
     def _struct_const(self, which: str) -> T:
         self.i += 2                      # name, '('
         n = 2 if which == "rng" else 3
+        noun = {"vect": "vector", "rot": "rotation", "rng": "range"}[which]
         for k in range(n):
             if k:
                 if not self.accept(","):
@@ -1084,11 +1092,14 @@ class Body:
             sign = 1
             if self.at("-") or self.at("+"):
                 sign = -1 if self.next().text == "-" else 1
-            num = self.next()
+            num = self.peek()
             if num is None or num.kind not in (INT, FLOAT):
-                raise Unsupported("struct constant component")
+                comp = {"vect": ("X", "Y", "Z"), "rot": ("Pitch", "Yaw", "Roll"),
+                        "rng": ("Min", "Max")}[which][k]
+                raise self.error(f"Missing {comp} component of {noun}")
+            self.next()
         if not self.accept(")"):
-            raise Unsupported("struct constant")
+            raise self.error(f"Missing ')' in {noun}")
         struct = {"vect": "Core.Object.Vector", "rot": "Core.Object.Rotator", "rng": "Core.Object.Range"}[which]
         return T("struct", struct=struct, const=True)
 
@@ -1137,11 +1148,9 @@ class Body:
             if enum is not None and enum[0] == "enum" and nxt.text == "(":
                 save = self.i
                 self.i += 2
-                try:
-                    code, inner = self.compile_expr(T("byte"), None)
-                except CompileError:
-                    self.i = save
-                    raise Unsupported("enum cast argument")
+                # An error inside the argument escapes, as UCC's appThrowf does;
+                # only a mismatch (code -1) backs off to "maybe a call".
+                code, inner = self.compile_expr(T("byte"), None)
                 if code != 1 or not self.accept(")"):
                     self.i = save
                     return None
@@ -1162,11 +1171,7 @@ class Body:
         if not self.accept("("):
             self.i = save
             return None
-        try:
-            code, inner = self.compile_expr(T("object", cls=OBJECT_PATH), None)
-        except CompileError:
-            self.i = save
-            raise Unsupported("cast argument")
+        code, inner = self.compile_expr(T("object", cls=OBJECT_PATH), None)
         if code != 1 or not self.accept(")"):
             self.i = save
             return None
@@ -1277,6 +1282,7 @@ class Body:
                 raise self._unknown_field(field_class, tok.text, cls, unknown_in, tok.line)
             return NONE
         kind, obj = found
+        self.last_field = tok.text        # Token.Identifier, as written
         if kind == "enum":
             path, values = obj
             if self.at(".", 1):
@@ -1496,9 +1502,10 @@ class Body:
                 if not self.at("["):
                     return tok
                 self.next()
+                name = self.last_field
                 self.expr_required(T("int"), "array index")
                 if not self.accept("]"):
-                    raise Unsupported("array index close")
+                    raise self.error(f"{name or ''} is an array; expecting ']'")
                 tok = tok.with_(dim=1)
             elif tok.kind == "struct" and self.at("."):
                 self.next()
@@ -1515,6 +1522,7 @@ class Body:
                     raise CompileError(f"Unknown member '{m.text if m else ''}' in struct "
                                        f"'{(tok.struct or '').split('.')[-1]}'", m.line if m else self.eof_line)
                 mt = self.s.field_type(member, self.s.own)
+                self.last_field = m.text
                 tok = mt.with_(flags=(tok.flags & {"out", "const"}) | (mt.flags & {"const"}))
             elif tok.kind == "object" and self.at("."):
                 self.next()
@@ -1529,12 +1537,18 @@ class Body:
                     continue
                 m = self.peek()
                 if tok.cls is None:
-                    raise Unsupported("context on None")
+                    # A member of the None literal: UCC trips an assertion (the
+                    # message is this 64-bit 3374 build's; the line is its source's).
+                    raise CompileError(NONE_CONTEXT_ASSERT, 0)
                 if m is not None and m.kind != IDENT:
                     raise CompileError(f"Unrecognized member '{self._member_text()}' in class "
                                        f"'{tok.cls.split('.')[-1]}'", m.line)
+                was = self.got_affector
+                self.got_affector = False
                 r = self.field_expr(tok.cls, required, is_self=False, concrete=True)
-                if r.kind == "none" and not self.got_affector:
+                called = self.got_affector
+                self.got_affector = was or called
+                if r.kind == "none" and not called:
                     if m is not None and m.kind == IDENT and self.s.find(m.text, None, tok.cls, False) is None:
                         chain = self.ts.class_chain(tok.cls)
                         last = self.s.ctx.info(chain[-1]) if chain else None

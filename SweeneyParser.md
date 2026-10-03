@@ -702,6 +702,67 @@ one whole build.
 Still no wrong outcome predicted anywhere. The two seeds UCC accepts that remain
 "don't know" use a Sound and a Material from a package that is only partly loaded.
 
+## Using it: `scripts/upredict.py`
+
+`upredict.py MyMod [--deps WSUTComp]` runs `predict()` over mod directories. It
+prints `ok`, UCC's first error, `hang`, or `unknown` with the classes it couldn't
+check, and its exit status gates a build (0 ok, 1 error/hang, 2 unknown). Several
+directories build in order, and each sees the ones before it. It refuses to run
+without a configured install, because then every mod would look broken. It is
+documented in the unrealscript skill and the agent instructions.
+
+## Mutants: body errors from real code
+
+Seeds test errors that come from renaming a class, and probes are small. To exercise
+the body compiler's error messages on real code, `tools/uparse_oracle/mutants.py`
+takes each seed UCC accepts and makes up to three single edits inside its function
+bodies. UCC builds each mutant and its verdict is recorded in `mutants.json` (local,
+like seeds). The edits come from 14 operators, chosen deterministically per seed:
+- dropped `;`, `)` or any token;
+- undefined names, calls and members;
+- literal swaps;
+- an argument dropped or added;
+- `==` turned into `=`;
+- operator swaps;
+- `return` with or without a value;
+- misplaced statements (`break;`, `local`, `goto`, `none.Destroy();`, ...).
+
+The first full run (5273 mutants) found cases where we predicted ok and UCC errors,
+plus a list of message mismatches. All are fixed, each confirmed by the data or read
+from the C++:
+- **`ALLOW_` flags.** Loops grant `break` and `continue`. A switch grants commands and
+  `break` only after its first `case`, so `continue` directly inside a switch is
+  refused. Locals end at the first statement that checks `ALLOW_Cmd`: `if`, `while`,
+  `do`, `for`, `foreach`, `switch`, `assert` and expressions. `return`, `break`,
+  `goto` and labels don't count, so `return; local int x;` compiles. Nests and state
+  code never allow locals.
+- **`Unknown Function/Property 'X' in '<scope>'`.** This is what `super.`, `default.`
+  and `static.` give when they name nothing. The scope is the parent class, the
+  parent state, or, for self, the function being compiled
+  (`Function Pkg.Class.Func`).
+- **A member of the `None` literal trips a UCC assertion.** The message is this
+  build's: `Token.PropertyClass != NULL`, at line 2930.
+- **A member token that isn't an identifier is reported by its text.** When UCC reads
+  an operand, a sign touching a digit is part of the number, so `C.-5` names member
+  `-5`.
+- **An error inside a cast's argument escapes.** Only a type mismatch backs off to
+  reading it as a call.
+- **Positions.**
+  - An unresolved `goto` is reported at the block's closing brace.
+  - A missing `;` at the end of a body is reported as `before '}'`.
+  - `Missing ';' before 'else'` is reported on the line after `else`, because UCC
+    has looked ahead for `else if`.
+  - A function missing its `}` after a statement gives
+    `Unexpected end of file at end of Class`, because pass 1 skips the body.
+- **Messages.** `Missing X component of vector` (also rotation and range),
+  `<Name> is an array; expecting ']'`, and `Missing '<' in 'array'`.
+
+| mutants (5273) | first run | now |
+|---|---|---|
+| outcome | 92.09% | **99.94%** (3 unknown, none wrong) |
+| exact first error line | 90.82% | **99.86%** |
+| exact first error message | 89.15% | **99.53%** |
+
 ## Oracle 3: `reflect.py`
 
 `tools/uparse_oracle/reflect.py` reads every script object in a `.u`: classes, states,
