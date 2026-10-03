@@ -79,6 +79,8 @@ DECL_KEYWORDS = {"var": "Var", "function": "Function", "event": "Function",
                  "state": "State", "enum": "Enum", "struct": "Struct", "const": "Const",
                  "replication": "Replication", "delegate": "Function",
                  "operator": "Function", "preoperator": "Function", "postoperator": "Function"}
+# CheckAllow's wording for the declarations ALLOW_VarDecl gates.
+VAR_DECL_WORDS = {"var": "'Var'", "enum": "'Enum'", "struct": "'struct'"}
 FUNCTION_WORDS = {"function", "event", "delegate", "operator", "preoperator", "postoperator"}
 DIRECTIVES = {"exec", "alwaysexec", "forceexec", "include", "call", "alwayscall", "error",
               "linenumber"}
@@ -195,6 +197,10 @@ class DeclParser:
         self.rep_statements: list[dict] = []
         self.error: DeclError | None = None
         self.missing_includes: set = set()
+        # UCC drops ALLOW_VarDecl from the class once a function (with a body or
+        # not, delegates too) or a state closes: var, enum and struct are errors
+        # after that, const is not (UnScrCom.cpp PopNest, measured).
+        self.vars_closed = False
 
     # ------------------------------------------------------------ top level
 
@@ -229,6 +235,8 @@ class DeclParser:
                 return
             if w in DECL_KEYWORDS:
                 raise c.error(f"'{DECL_KEYWORDS[w]}' is not allowed before the Class definition")
+        if w in VAR_DECL_WORDS and self.vars_closed:
+            raise c.error(f"{VAR_DECL_WORDS[w]} is not allowed here")
         if w == "var":
             self._var(self.fields, owner=self.cls)
         elif w == "local":
@@ -254,8 +262,10 @@ class DeclParser:
                 if f["kind"] == "State" and f["name"].lower() == st["name"].lower():
                     raise DeclError(f"Duplicate state '{st['name']}'", st["_line"], st["_tpos"])
             self.fields.append(st)
+            self.vars_closed = True
         else:
             self.fields.extend(self._function(in_state=False))
+            self.vars_closed = True
 
     def _check_dup(self, f: dict, kind: str, word: str) -> None:
         for g in self.fields:
