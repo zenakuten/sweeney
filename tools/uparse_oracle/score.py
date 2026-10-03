@@ -337,6 +337,7 @@ def score_packages(t: Tally) -> None:
             for d in it.get("deps", []):
                 if d not in deps.setdefault(it["package"].lower(), []):
                     deps[it["package"].lower()].append(d)
+    built: dict = {}
     for pkg, files in local_packages():
         if not (reference_root(LOCAL) / "System" / f"{pkg}.u").exists():
             continue
@@ -350,6 +351,34 @@ def score_packages(t: Tally) -> None:
         if not ok:
             msg = template(pred.errors[0].message) if pred.errors else ""
             t.diverge("packages", (pred.outcome, msg), (len(srcs), pkg))
+        built[pkg] = srcs
+    score_renamed(t, built)
+
+
+def score_renamed(t: Tally, built: dict) -> None:
+    """The local mods renamed as a release would be (scripts/uscript_rename.py's
+    rewrite, in memory) and built together with no compiled copy to lean on: the
+    path a brand-new package takes. #exec content can't be seen, so "unknown" is
+    fine here; an error is not."""
+    if not built:
+        return
+    sys.path.insert(0, str(REPO / "scripts"))
+    from uscript_rename import rewrite
+    renames = [(p, f"{p}_UPTEST") for p in built]
+    pkgs = {}
+    for pkg, srcs in built.items():
+        out = {}
+        for k, v in srcs.items():
+            text = rewrite(Path(k), v.decode("latin-1"), renames)
+            out[k] = text.encode("latin-1")
+        pkgs[f"{pkg}_UPTEST"] = out
+    pred = uparse.predict(pkgs, [])
+    ok = pred.outcome in ("ok", "unknown")
+    t.add(f"packages.renamed.{LOCAL}", ok)
+    if not ok:
+        e = pred.errors[0] if pred.errors else None
+        t.diverge("packages", ("renamed", pred.outcome, template(e.message) if e else ""),
+                  (0, f"{e.file}({e.line})" if e else ""))
 
 
 def _seed_error(s: str) -> dict:

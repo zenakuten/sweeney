@@ -101,6 +101,9 @@ class Context:
         # of `visible` is only what their import tables name.
         self.fully_loaded: set | None = None
         self.last_hits: list = []                 # find_loaded's in-memory matches
+        # Packages being built whose classes have #exec lines: they may hold
+        # objects no source declares (imported textures, sounds).
+        self.exec_packages: set[str] = set()
         # Classes being built: lower name -> (own stored defaults or None, parent).
         self.source_defaults: dict[str, tuple] = {}
         self._imported_paths: dict[str, set] = {}

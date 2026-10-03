@@ -247,6 +247,8 @@ def literal_problem(ctx, package: str, own: str, type_name: str, path: str) -> s
             return "unknown"
         if hit is not None:
             return None
+        if "." not in path and ctx.exec_packages:
+            return "unknown"              # maybe imported by an #exec of the build
     return f"Can't find {type_name} '{path}'"
 
 
@@ -303,7 +305,11 @@ def predict(packages: dict[str, dict[str, bytes]], deps: list[str] | None = None
     all_ok = True
     ctx = default_context(prefer_compiled=True)
     built: list[str] = []
-    with contextlib.ExitStack() as overlays:
+    saved_exec = ctx.exec_packages
+    ctx.exec_packages = set()
+    overlays_cm = contextlib.ExitStack()
+    overlays_cm.callback(lambda: setattr(ctx, "exec_packages", saved_exec))
+    with overlays_cm as overlays:
         for pkg, files in packages.items():
             if first_error:
                 break                     # UCC stops at the package that failed
@@ -338,6 +344,8 @@ def _predict_package(ctx, pkg: str, files: dict, visible: list, overlays, first_
         return None if v is None else _decode_text(v)
     pkg_exec = any(_EXEC_LINE.search(_decode_text(src)) for k, src in files.items()
                    if k.lower().endswith(".uc"))
+    if pkg_exec:
+        ctx.exec_packages.add(pkg.lower())
     views = _source_views(files, read)
     overlays.enter_context(ctx.overlay(pkg, views))
     for name in _parents_first(files, views):

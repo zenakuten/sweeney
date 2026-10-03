@@ -709,9 +709,16 @@ def predict_defaults(view: dict, lines: list[str], package: str, ctx, stock_pack
         if "." not in path:
             if path.lower() in _current_importer.subobjects:
                 return UNKNOWN            # a subobject declared in this block
+            if (cls or "").lower() == "class":
+                # Every class of a loaded package is in memory, including those of
+                # the packages being built, which have no .u to search.
+                info = ctx.info(path)
+                if info is not None:
+                    return (info.path(), "Class")
             hit = ctx.find_loaded(path)
             if hit is None:
-                return None
+                # An #exec in any class of the package may have made it.
+                return UNKNOWN if (has_exec or package_exec) else None
             return UNKNOWN
         pkg_name = path.split(".")[0]
         if pkg_name.lower() in (package.lower(), name.lower()):
