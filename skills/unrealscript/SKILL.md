@@ -311,6 +311,18 @@ for you to read over. `--also` renames references to a dependency released along
 - **A cross-package reference must be to a *public* object**, or `SavePackage` fails at
   the very end of a build that looked fine.
 
+## Errors that point somewhere unhelpful
+
+- **An `optional` dynamic array parameter must still be passed.** `function F(optional
+  array<int> A)` called as `F()` is `Call to 'F': bad or missing parameter 1`; the
+  same goes for `optional out array<...>`, a gap `F(1,,2)`, or dropping it from the
+  end (`missing or bad parameter N`). Optional ints, strings and structs can be left
+  off. Give the array its own helper, or always pass a local.
+- **`Context expression: Variable is too large (N bytes, 255 max)`** is only a
+  warning, but don't ship it: reading an element of a large static array through
+  another object (`Other.BigArray[i]`) is what triggers it. Read it through a
+  function on the owning class instead (`Other.GetEntry(i, out E)`).
+
 ## More
 
 - `references/build-and-packaging.md` — EditPackages, `UCC compress`, and moving output

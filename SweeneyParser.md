@@ -618,6 +618,16 @@ Found while getting it right:
   `const` (the call stack, with one `MakeScript` per class in the hierarchy) and an
   empty `dependson()` (`General protection fault!`). A 64-character identifier gives
   `Unhashed name`.
+- **An `optional` dynamic array parameter can't be omitted.** Leaving it off a call
+  (`F()`), leaving it empty between commas (`F(1,,2)`) or dropping it from the end
+  (`F(1)`) is the same error as for a required parameter: `bad or missing parameter
+  N`, or `missing or bad parameter N` for the trailing case. `out` makes no
+  difference. Omitted optional ints, strings and structs are fine. The parser used to
+  accept all three (probes `call-omit-optional-array`, `call-omit-optional-out-array`,
+  `call-omit-trailing-optional-array`, `call-skip-optional-array-middle`, with
+  controls `call-omit-optional-out-int`, `-vector`, `-string`,
+  `call-pass-optional-out-array`). Found as a real miss: upredict said ok on a mod
+  that UCC rejected.
 
 **Scoreboard:** no wrong outcome predicted anywhere (probes, seeds, corpus).
 

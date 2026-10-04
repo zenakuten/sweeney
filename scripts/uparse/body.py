@@ -1446,15 +1446,20 @@ class Body:
         for n, (pname, ptype) in enumerate(fn.params):
             if n == 1 and iterator_class is not None:
                 ptype = ptype.with_(cls=iterator_class)
+            # An optional dynamic array still has to be passed: leaving it off,
+            # or empty between commas, is the same error as a required one
+            # (probes call-omit-optional-array, call-omit-trailing-optional-array,
+            # call-skip-optional-array-middle). Other optional types can be omitted.
+            omittable = "optional" in ptype.flags and ptype.dim != 0
             if n != 0 and not self.accept(","):
-                if "optional" not in ptype.flags:
+                if not omittable:
                     raise self.error(f"Call to '{fn.name}': missing or bad parameter {n + 1}")
                 break
             code, r = self.compile_expr(ptype, None)
             if code == -1:
                 raise self.error(f"Call to '{name_tok.text}': type mismatch in parameter {n + 1}")
             if code == 0:
-                if "optional" not in ptype.flags:
+                if not omittable:
                     raise self.error(f"Call to '{name_tok.text}': bad or missing parameter {n + 1}")
                 if self.at(")"):
                     break
