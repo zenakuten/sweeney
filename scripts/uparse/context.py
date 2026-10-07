@@ -71,6 +71,7 @@ class ClassInfo:
         self.state_function_defs: dict[str, dict[str, dict]] = {}
         self.var_defs: dict[str, dict] = {}       # lower property name -> field
         self.enum_values: dict[str, list[str]] = {}
+        self.dependson: list[str] = []          # source only: its dependson() classes
 
     def path(self) -> str:
         return f"{self.package}.{self.name}"
@@ -197,6 +198,7 @@ class Context:
         info.config = view.get("config")
         info.class_flags = list(view.get("class_flags") or [])
         info.within = view.get("within")
+        info.dependson = [d.strip() for d in view.get("_dependson") or [] if d.strip()]
         for f in view.get("fields", []):
             low = f["name"].lower()
             if f["kind"] == "Struct":

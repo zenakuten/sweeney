@@ -322,6 +322,12 @@ for you to read over. `--also` renames references to a dependency released along
   warning, but don't ship it: reading an element of a large static array through
   another object (`Other.BigArray[i]`) is what triggers it. Read it through a
   function on the owning class instead (`Other.GetEntry(i, out E)`).
+- **`Unrecognized type 'S' within 'Other'`** for a struct or enum that plainly
+  exists: `Other.S` names a class in the same package that UCC hasn't parsed yet.
+  Parents are parsed before subclasses, and other branches in an order that only
+  looks arbitrary (an `Info` subclass before a `Controller` one), so the same line
+  can compile in one class and fail in another. Add `dependson(Other)` to the class
+  that uses the type; it makes UCC parse `Other` first.
 
 ## More
 

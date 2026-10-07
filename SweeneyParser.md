@@ -686,6 +686,21 @@ Each item below was measured against UCC or read from its source:
   others: a SoundGroup pulls in its Sounds.
 - **`dependson()` on a class that isn't loaded crashes UCC** with
   `General protection fault!`.
+- **`Other.Type` needs `Other` parsed first.** A declaration naming a struct or
+  enum of another class in the package being built is resolved in pass 1, so if
+  that class hasn't been parsed yet it's `Unrecognized type 'Type' within 'Other'`
+  (`suites/parseorder.jsonl`). Parents come before subclasses, and a `dependson()`
+  class before the class naming it. Across branches the order follows the loaded
+  classes in memory, and native classes are registered by the engine binary, so it
+  can't be read from the packages: it is measured. `tools/uparse_oracle/classorder.py`
+  builds a subclass of every stock class and records the `Parsing` order into
+  `scripts/uparse/data/classorder.json`, keyed by `ucc_id`. A package class whose
+  parent is stock class P is parsed at P's turn (stock children's subtrees come
+  first); one under a dependency's class just before its nearest stock ancestor's
+  turn. Classes with the same parent follow the order the package's classes were
+  created in. Two probes look alphabetical by file name, but that isn't modelled, so
+  it's "don't know"; so is a pair another class's `dependson()` could reorder, and
+  any install whose `ucc_id` doesn't match the file.
 - **A missing `#include` file stops pass 1 at its line.** The message is
   `include file <path> not found`.
 - **A `Begin Object` whose class isn't loaded creates nothing.** Its lines set the

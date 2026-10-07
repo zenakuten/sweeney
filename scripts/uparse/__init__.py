@@ -122,6 +122,10 @@ def _analyze(name, src, package, context, path, includes=None, package_exec=True
     for pos, line, msg in deferred_errors(view, package, ctx):
         if pos < limit:
             candidates.append((pos, line, msg))
+    order_errors, order_unknown = _parse_order_refs(view, stem, im.dependson, package, ctx)
+    for pos, line, msg in order_errors:
+        if pos < limit:
+            candidates.append((pos, line, msg))
     if candidates:
         pos, line, msg = min(candidates, key=lambda c: c[0])
         return Analysis(error=Diag(name, line, msg))
@@ -170,9 +174,168 @@ def _analyze(name, src, package, context, path, includes=None, package_exec=True
         unknown = f"defaults: {getattr(_d, 'last_unknown_reason', None)}"
     if includes_unknown and unknown is None:
         unknown = "include file: nowhere to look"
+    if order_unknown and unknown is None:
+        unknown = order_unknown
     return Analysis(view=resolved, defaults=stored,
-                    compiled=bodies_ok and defaults_checked and not includes_unknown,
+                    compiled=bodies_ok and defaults_checked and not includes_unknown
+                    and not order_unknown,
                     unknown=unknown)
+
+
+def _parse_order_refs(view: dict, stem: str, dependson, package: str, ctx):
+    """`Other.Type` declarations naming a class of the package being built.
+
+    UCC's first pass resolves that type when it parses this class, so Other must
+    have been parsed already, or it's "Unrecognized type 'Type' within 'Other'"
+    (tests/uparse/suites/parseorder.jsonl). Parents are parsed before their
+    subclasses, and a dependson() class (this class's, or an ancestor's) before the
+    class naming it. So an ancestor or a dependson class is fine and a subclass is
+    an error. Anything else depends on the order of the engine's class branches
+    (an Info subclass is parsed before a Controller one). That order is measured,
+    not derived: data/classorder.json (tools/uparse_oracle/classorder.py) holds the
+    turn UCC gives a new subclass of each stock class. A class whose parent is
+    stock class P is parsed at P's turn; one under a dependency's class, just
+    before its nearest stock ancestor's turn (dependencies load after the stock
+    packages, so their subtrees come after the stock ones but before the package's
+    own direct subclasses). Two classes at the same turn (same parent) follow the
+    order the package's classes were created in, which isn't modelled: "don't
+    know". So is any pair a dependson() elsewhere in the package could reorder.
+    Returns ([(token pos, line, message)], unknown reason or None)."""
+    if package is None or package.lower() not in ctx.building:
+        return [], None
+    pkg = package.lower()
+    me = (view.get("name") or stem).lower()
+
+    def own(cls):
+        info = ctx.info(cls, package)
+        return info if info is not None and info.package.lower() == pkg else None
+
+    def chain(cls):
+        """cls and its ancestors inside the package, lower case."""
+        out, info = [], own(cls)
+        while info is not None and info.name.lower() not in out:
+            out.append(info.name.lower())
+            info = own(info.super) if info.super else None
+        return out
+
+    ancestors = chain(me)[1:] or [(view.get("super") or "").split(".")[-1].lower()]
+    # Parsed before this class: dependson classes (and their ancestors and their own
+    # dependson classes) of this class and of its ancestors in the package.
+    before, todo = set(), [d.strip() for d in dependson if d.strip()]
+    for a in ancestors:
+        info = own(a)
+        if info is not None:
+            todo.extend(info.dependson)
+    while todo:
+        d = todo.pop()
+        for c in chain(d) or [d.lower()]:
+            if c not in before:
+                before.add(c)
+                info = own(c)
+                if info is not None:
+                    todo.extend(info.dependson)
+
+    # Classes some dependson() parses early: the target, and when its parent in the
+    # package isn't parsed yet, that parent's whole subtree.
+    pulled = set()
+    for info in ctx.by_package.values():
+        if info.package.lower() != pkg:
+            continue
+        for d in info.dependson:
+            c = chain(d)
+            pulled.update(c[1:] if len(c) > 1 else c)
+    def subtree_of(low):
+        return {c for (p, c), i in ctx.by_package.items() if p == pkg and low in chain(c)}
+    pulled_all = set()
+    for c in pulled:
+        pulled_all |= subtree_of(c)
+
+    errors, unknown = [], None
+    for t in _qualified_types(view.get("fields", [])):
+        parts = t["type"].split(".")
+        if len(parts) != 2:
+            continue
+        other = own(parts[0])
+        if other is None or other.name.lower() == me:
+            continue
+        low = other.name.lower()
+        if low in ancestors or low in before:
+            continue
+        if me in chain(low):
+            errors.append((t.get("_tpos", 0), t.get("_line", 0),
+                           f"Unrecognized type '{parts[1]}' within '{parts[0]}'"))
+            continue
+        first = None if me in pulled_all else _parsed_first(me, low, chain, ctx)
+        if first == "other":
+            continue
+        if first == "me" and low not in pulled_all:
+            errors.append((t.get("_tpos", 0), t.get("_line", 0),
+                           f"Unrecognized type '{parts[1]}' within '{parts[0]}'"))
+        elif unknown is None:
+            unknown = (f"parse order: {t['type']} needs {other.name} parsed first, and the "
+                       f"order of different class branches isn't modelled "
+                       f"(dependson({other.name}) makes it certain)")
+    return errors, unknown
+
+
+_CLASS_ORDER = None
+
+
+def _class_order(ctx) -> dict | None:
+    """{lower 'pkg.class': turn} from data/classorder.json, when it was measured
+    with this install's UCC; None otherwise."""
+    global _CLASS_ORDER
+    if _CLASS_ORDER is None:
+        import json
+        from pathlib import Path
+        from .context import _config
+        _CLASS_ORDER = {}
+        try:
+            d = json.loads((Path(__file__).parent / "data" / "classorder.json").read_text())
+            if d.get("ucc_id") and d["ucc_id"] == _config().get("ucc_id"):
+                _CLASS_ORDER = {c.lower(): i for i, c in enumerate(d["order"])}
+        except (OSError, ValueError):
+            pass
+    return _CLASS_ORDER or None
+
+
+def _parsed_first(me: str, other: str, chain, ctx) -> str | None:
+    """Which of two package classes in different branches UCC parses first:
+    "me", "other", or None when it can't be told."""
+    order = _class_order(ctx)
+    if order is None:
+        return None
+    stock = set(order)
+
+    def key(low):
+        top = chain(low)[-1]
+        parent = (ctx.info(top).super or "") if ctx.info(top) else ""
+        info, dep = ctx.info(parent), False
+        while info is not None and info.path().lower() not in stock:
+            dep = True                   # a dependency's class: before the stock turn
+            info = ctx.info(info.super) if info.super else None
+        if info is None:
+            return None
+        return (order[info.path().lower()], 0 if dep else 1, parent.lower() if dep else "")
+    a, b = key(me), key(other)
+    if a is None or b is None or a == b:
+        return None
+    if a[:2] == b[:2]:
+        return None                      # two dependency branches: their load order
+    return "me" if a < b else "other"
+
+
+def _qualified_types(fields):
+    """Every declared type written `Class.Type`: variables, struct members,
+    function parameters, return values and locals, in states too."""
+    for f in fields:
+        for t in (f.get("_type"), (f.get("_ret") or {}).get("_type") if isinstance(f.get("_ret"), dict) else None):
+            while t:
+                if t.get("kind") == "UnresolvedProperty" and "." in (t.get("type") or ""):
+                    yield t
+                t = t.get("inner_type") if t.get("kind") == "ArrayProperty" else None
+        if f.get("kind") in ("Struct", "Function", "State"):
+            yield from _qualified_types(f.get("fields") or [])
 
 
 import re as _re
@@ -502,6 +665,7 @@ def _source_views(files: dict, read) -> list[dict]:
             view = parse_declarations(tokenize(expand_includes(im.script_text(), read)), Path(name).stem)
         except (LexError, DeclError):
             continue
+        view["_dependson"] = list(im.dependson)
         if view.get("name"):
             views.append(view)
     return views
