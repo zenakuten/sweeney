@@ -50,6 +50,17 @@ function it read, so you can check it.
 
 ## Tools
 
+**`scripts/cache_extract.py`** — recovers a package by name from a client's
+`Cache/cache.ini`, follows package imports transitively with Sweeney's UE2 reader,
+and copies missing packages to the build install's proper content folders. It
+preflights missing or ambiguous dependencies, never overwrites existing files, and
+verifies copies. Paths default to the installs in `~/.sweeney/config.json`.
+
+```bash
+python scripts/cache_extract.py ONS-Dreamus2SE-T32-C-V1 --dry-run
+python scripts/cache_extract.py ONS-Dreamus2SE-T32-C-V1
+```
+
 **`scripts/uccheck.py`** — catches, before you build, the traps that produce no compiler
 message: file encoding, comments that hang the tokenizer, and enum properties given
 integers. It also flags the ternary operator, which UCC rejects with a message that
@@ -100,6 +111,7 @@ It needs no per-mod list of special cases, and it reports every use it left alon
 | `ut2004-netcode` | replication, roles, relevancy, client vs server code |
 | `ut2004-gui` | menus, HUD, Canvas, scoreboards |
 | `ut2004-packages` | `.u`/`.utx`, textures, meshes, sounds, the UE2 package format |
+| `cache-extract` | recovering cached maps and packages, including transitive dependencies |
 | `ut2004-maps` | `.t3d`, UnrealEd, BSP, terrain, collision |
 | `ut2004-editor-automation` | driving a running UnrealEd through its command bridge |
 | `ut2004-live-testing` | driving a running server, logs, screenshots |
