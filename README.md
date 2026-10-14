@@ -92,6 +92,21 @@ error  (193 classes in MyMod)
   Freon_Trigger.uc(23) : Types are incompatible with '*'
 ```
 
+**`scripts/uprof.py`** — reads the `.uprof` the engine writes after `PROFILESCRIPT
+START` / `STOP`, and reports where script time went: self and inclusive time per
+function, calls per tick, time per package, one function's callers and callees, and a
+per-tick comparison of two captures to measure a script change. The UT2004MCP
+`profile_script` tool runs the profiler on a server.
+
+```
+$ uprof.py -m WSUTComp -n 3
+ut2004-2026-10-14_16-33-55.uprof: 7501 frames, 396.0 ms of script (0.053 ms/frame), 47 functions, 64-bit capture, 0.1 us/cycle
+     self      incl    calls  us/call  self/fr calls/fr  function
+     5.48      6.20     7502     0.83   0.0007     1.00  WSUTComp.MutUTComp.Tick
+     3.13      3.17     7502     0.42   0.0004     1.00  WSUTComp.TimeStamp_Pawn.Tick
+     0.72      0.72     7502     0.10   0.0001     1.00  WSUTComp.MutUTComp.SetPawnStamp
+```
+
 **`scripts/ucc-probe.sh`** — UCC is community-patched and there is more than one of it.
 This builds a throwaway package one construct at a time against *your* install and
 reports ok / error / hang, so compiler behaviour is measured rather than inherited as

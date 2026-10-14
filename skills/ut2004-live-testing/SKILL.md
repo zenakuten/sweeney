@@ -1,6 +1,6 @@
 ---
 name: ut2004-live-testing
-description: Testing UT2004 mods against a running server — the UT2004MCP in-game MCP server, driving a real client, reading server and client logs, and server configuration. Use when a change needs verifying in game, when a mod works offline but not online, when reading server.log or UT2004.log, when adding bots or switching maps for a test, or when changing server config.
+description: Testing UT2004 mods against a running server — the UT2004MCP in-game MCP server, driving a real client, reading server and client logs, profiling script with PROFILESCRIPT, and server configuration. Use when a change needs verifying in game, when a mod works offline but not online, when reading server.log or UT2004.log, when adding bots or switching maps for a test, when changing server config, or when measuring the script cost of a change or finding what is slow.
 ---
 
 # Testing against a running server
@@ -31,6 +31,7 @@ game port, and **has no authentication** — firewall it and treat it as LAN-onl
 | `player_input` | `player`, `command` | run a bound command as a player (`Jump`, `Fire`, `MyMenu`) |
 | `screenshot` | `player` | capture a player's view to `ScreenShots/ShotNNNNN.bmp` |
 | `gui_click` | `player`, `caption` | click a menu button on a player's client |
+| `profile_script` | `action` | `start`, `stop` or `reset` the script profiler on the server (see below) |
 
 Quick check without a client:
 
@@ -65,6 +66,55 @@ client's own moves overwrite it. Bots cannot screenshot.
 The server loads the mutator's `.u` at startup. After a rebuild, **ask the user to restart
 the server and wait for them to confirm** before connecting. Connecting first only reaches
 the stale build and is misleading.
+
+## Profiling script
+
+The engine has a built-in UnrealScript profiler, driven by a console command:
+
+| Command | Does |
+|---|---|
+| `PROFILESCRIPT START` | begin recording every script function call and engine event, with its time |
+| `PROFILESCRIPT RESET` | discard what has been recorded so far, keep recording |
+| `PROFILESCRIPT STOP` | write `ut2004-<date>_<time>.uprof` into `System/` and stop |
+
+It profiles **the process that runs it**. Typed in a client console, it measures that
+client's script (HUD, menus, client-side effects). For the server, use UT2004MCP's
+`profile_script` tool, which sends the same command server-side. The file lands in
+that process's `System/` folder, so the newest `.uprof` there is the capture.
+
+Read it with `scripts/uprof.py`:
+
+```bash
+python3 <sweeney>/scripts/uprof.py                       # newest capture in the install
+python3 <sweeney>/scripts/uprof.py --client              # newest in the client install
+python3 <sweeney>/scripts/uprof.py -m WSUTComp           # only paths matching a regex
+python3 <sweeney>/scripts/uprof.py --packages            # self time per package
+python3 <sweeney>/scripts/uprof.py --func MutUTComp.Tick # callers and callees
+python3 <sweeney>/scripts/uprof.py --compare before.uprof after.uprof
+```
+
+Each row is one function as `Package.Class.Function` (with the state between class and
+function for state code): **self** time in the function itself, **incl** time with
+everything it called, **calls**, and the same per **frame** (one server or client tick).
+Compare captures per frame, since no two captures are the same length.
+
+What it does and doesn't see, as measured on a capture:
+
+- **Natives are not recorded.** `InStr`, `Mid`, `VSize` and the like never appear;
+  their cost is in the self time of the script function that called them. A function
+  with high self time and few lines is usually a native-heavy one.
+- Only script. Rendering, physics, collision and replication cost nothing here, so a
+  slow frame with little script time is somewhere else.
+- Clock resolution under Wine is 0.1 us (the header prints it). Times of a few
+  tenths of a microsecond per call are noise.
+- A dedicated server with no human connected never starts the match: the bots don't
+  spawn and the capture is the idle server. Have a player connected, or the profile
+  measures nothing of the gameplay.
+
+To measure a script change: capture the same situation (same map, same bot count,
+similar length) before and after, `RESET` just as the situation starts so loading and
+warm-up are not in it, and run `--compare`. The `.uprof` is also the input to Epic's
+`ueScriptProfiler.exe` viewer, where it is installed.
 
 ## Logs
 

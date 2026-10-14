@@ -118,6 +118,10 @@ error, `hang`, or `unknown`) in seconds, without a UCC round trip. On `ok` or
 `unknown`, build to confirm. A clean compile does not mean the code does what you
 wrote.
 
+When a change could cost frame time (anything in `Tick`, a timer, an iterator, a
+per-player loop), measure it: capture with `PROFILESCRIPT` before and after and compare
+with `scripts/uprof.py --compare`. The `ut2004-live-testing` skill has the procedure.
+
 ## Skills
 
 Load the relevant one with the **Skill tool** — by name, e.g. `unrealscript`. Do not go
